@@ -11,8 +11,8 @@ app = Flask(__name__)
 # 👉 user source memory
 user_source = {}
 
-# 👉 ManyChat webhook URL (ဒီမှာထည့်)
-MANYCHAT_URL = "https://your-manychat-webhook-url"
+# 👉 Google Sheets Webhook URL (ဒီမှာထည့်)
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzMqfT6__4nNctRvgMX1sh_0AQzRNczsE2M9PjKVRCs-kdSipNBR8jSkCWLmJR9f7xqng/exec"
 
 
 # 🔥 START (channel tracking)
@@ -29,8 +29,8 @@ def start(message):
 
     print(f"START | {user_id} | {source}")
 
-    # 👉 ManyChat ကိုပို့
-    send_to_manychat(user_id, "start", source)
+    # 👉 Google Sheets ကိုပို့
+    send_to_sheet(user_id, "start", source, "start")
 
 
 # 💬 TEXT MESSAGE (chat tracking)
@@ -42,8 +42,8 @@ def handle_text(message):
 
     print(f"MSG | {user_id} | {source} | {text}")
 
-    # 👉 ManyChat ကိုပို့
-    send_to_manychat(user_id, text, source)
+    # 👉 Google Sheets ကိုပို့
+    send_to_sheet(user_id, text, source, "text")
 
 
 # 📸 PHOTO (deposit slip tracking + link)
@@ -64,22 +64,23 @@ def handle_photo(message):
 
     print(f"DEPOSIT | {user_id} | {source} | LINK: {image_url}")
 
-    # 👉 ManyChat ကိုပို့
-    send_to_manychat(user_id, image_url, source)
+    # 👉 Google Sheets ကိုပို့ (IMPORTANT)
+    send_to_sheet(user_id, image_url, source, "deposit")
 
 
-# 🚀 SEND DATA → ManyChat
-def send_to_manychat(user_id, text, source):
+# 🚀 SEND DATA → GOOGLE SHEETS
+def send_to_sheet(user_id, message, source, msg_type):
     data = {
         "user_id": user_id,
-        "message": text,
-        "source": source
+        "message": message,
+        "source": source,
+        "type": msg_type
     }
 
     try:
-        requests.post(MANYCHAT_URL, json=data)
+        requests.post(GOOGLE_SHEET_URL, json=data)
     except Exception as e:
-        print("ManyChat Error:", e)
+        print("Sheet Error:", e)
 
 
 # 🌐 WEBHOOK ROUTE
