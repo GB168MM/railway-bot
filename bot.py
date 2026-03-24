@@ -12,7 +12,7 @@ app = Flask(__name__)
 user_source = {}
 
 # 👉 Google Sheets Webhook URL (ဒီမှာထည့်)
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzMqfT6__4nNctRvgMX1sh_0AQzRNczsE2M9PjKVRCs-kdSipNBR8jSkCWLmJR9f7xqng/exec"
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbx9UzcfGvvdpIZTTSxedgBpe2p2OeQi7aRrlWoZTHx_LEodXlaob5JdgVqenUOGtV5lbA/exec"
 
 
 # 🔥 START (channel tracking)
