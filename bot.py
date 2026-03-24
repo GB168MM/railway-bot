@@ -12,14 +12,13 @@ app = Flask(__name__)
 def home():
     return "Bot is running 🚀"
 
+def run_bot():
+    bot.infinity_polling()
+
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-threading.Thread(target=run_web).start()
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.send_message(message.chat.id, "Railway Bot Running 🚀")
-
-bot.infinity_polling()
+# run both safely
+threading.Thread(target=run_bot).start()
+run_web()
