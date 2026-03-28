@@ -8,7 +8,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import io
 import re
 
-# 👉 OCR path (Railway Linux)
+# 👉 OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -16,15 +16,14 @@ bot = telebot.TeleBot(TOKEN)
 
 app = Flask(__name__)
 
-# 👉 memory
 user_source = {}
 user_first_message_saved = {}
 
-# 👉 Google Sheets Webhook URL (ပြောင်းထည့်ပါ)
+# 👉 Google Sheet URL (ပြောင်းထည့်)
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
-# 🚀 SEND TO GOOGLE SHEETS
+# 🚀 SEND TO SHEET
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -43,7 +42,7 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         print("Sheet Error:", e)
 
 
-# 🧠 SLIP DETECTION
+# 🧠 SLIP CHECK
 def is_valid_slip(text):
     text = text.lower()
 
@@ -66,18 +65,39 @@ def is_valid_slip(text):
     return score >= 3
 
 
-# 🧠 EXTRACT DATA (STRONG)
+# 🧠 SMART AMOUNT EXTRACT 🔥
 def extract_slip_data(text):
     text_lower = text.lower()
-
-    clean_text = text.replace(",", "").replace(" ", "").replace("-", "")
-
-    numbers = re.findall(r"\d{4,}", clean_text)
+    text_clean = text.replace(",", "")
 
     amount = "unknown"
-    if numbers:
-        amount = max(numbers, key=lambda x: int(x))
 
+    # 👉 STEP 1: Ks / MMK pattern
+    match = re.findall(r"(\d{3,}(?:\.\d+)?)\s*(ks|mmk)", text_lower)
+    if match:
+        amount = match[0][0]
+
+    else:
+        # 👉 STEP 2: amount line detect
+        lines = text.split("\n")
+        for line in lines:
+            if "amount" in line.lower() or "total" in line.lower():
+                nums = re.findall(r"\d{3,}", line.replace(",", ""))
+                if nums:
+                    amount = nums[0]
+                    break
+
+        # 👉 STEP 3: fallback (filter ref no)
+        if amount == "unknown":
+            nums = re.findall(r"\d{5,}", text_clean)
+
+            # 👉 remove too long numbers (ref no / phone)
+            filtered = [n for n in nums if len(n) <= 7]
+
+            if filtered:
+                amount = max(filtered, key=lambda x: int(x))
+
+    # 👉 bank detect
     if "kbz" in text_lower:
         bank = "KBZ"
     elif "wave" in text_lower:
@@ -91,12 +111,13 @@ def extract_slip_data(text):
     else:
         bank = "unknown"
 
+    # 👉 status detect
     if "thank" in text_lower or "success" in text_lower or "completed" in text_lower:
         status = "success"
     else:
         status = "unknown"
 
-    print("AMOUNT:", amount)
+    print("FINAL AMOUNT:", amount)
     print("BANK:", bank)
 
     return amount, bank, status
@@ -129,9 +150,7 @@ def handle_text(message):
 
     if not user_first_message_saved.get(user_id, False):
         print(f"FIRST MSG | {user_id} | {text}")
-
         send_to_sheet(user_id, source, "first_message", text, "", "", "")
-
         user_first_message_saved[user_id] = True
 
 
@@ -169,9 +188,8 @@ def handle_photo(message):
             print(f"VALID SLIP | {amount} | {bank}")
 
             send_to_sheet(user_id, source, "deposit", image_url, amount, bank, status)
-
         else:
-            print("IGNORE NON-SLIP")
+            print("IGNORE PHOTO")
 
     except Exception as e:
         print("PHOTO ERROR:", e)
