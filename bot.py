@@ -8,7 +8,6 @@ from PIL import Image, ImageEnhance, ImageFilter
 import io
 import re
 
-# 👉 OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -19,11 +18,10 @@ app = Flask(__name__)
 user_source = {}
 user_first_message_saved = {}
 
-# 👉 Google Sheet URL (ပြောင်းထည့်)
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
-# 🚀 SEND TO SHEET
+# 🚀 SEND TO SHEET (FINAL FORMAT)
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -42,85 +40,70 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         print("Sheet Error:", e)
 
 
-# 🧠 SLIP CHECK
+# 🧠 SLIP CHECK (BALANCE)
 def is_valid_slip(text):
-    text = text.lower()
+    t = text.lower()
 
-    if "kbz" in text and ("pay" in text or "bank" in text):
-        return True
+    keywords = ["kbz", "pay", "bank", "ks", "mmk", "transfer", "success"]
 
-    currency = ["ks", "mmk", "ကျပ်"]
-    bank = ["kbz", "wave", "aya", "cb", "uab"]
-    success = ["success", "completed", "thank"]
+    score = sum([1 for k in keywords if k in t])
 
-    score = sum([
-        any(x in text for x in currency),
-        any(x in text for x in bank),
-        any(x in text for x in success),
-        bool(re.search(r"\d+", text))
-    ])
+    print("SLIP SCORE:", score)
 
-    print("SCORE:", score)
-
-    return score >= 3
+    return score >= 2
 
 
-# 🧠 SMART AMOUNT EXTRACT 🔥
-def extract_slip_data(text):
-    text_lower = text.lower()
-    text_clean = text.replace(",", "")
+# 🧠 AMOUNT EXTRACT (IMPROVED 🔥)
+def extract_amount(text):
+    t = text.lower().replace("o", "0")
 
-    amount = "unknown"
-
-    # 👉 STEP 1: Ks / MMK pattern
-    match = re.findall(r"(\d{3,}(?:\.\d+)?)\s*(ks|mmk)", text_lower)
+    # 👉 STEP 1: Ks pattern (best)
+    match = re.findall(r"(\d{3,})\s*(ks|mmk)", t.replace(",", ""))
     if match:
-        amount = match[0][0]
+        return match[0][0]
 
+    # 👉 STEP 2: amount line
+    for line in text.split("\n"):
+        l = line.lower().replace("o", "0")
+        if "amount" in l or "ks" in l:
+            nums = re.findall(r"\d{3,}", l.replace(",", ""))
+            if nums:
+                return nums[0]
+
+    # 👉 STEP 3: fallback (safe length only)
+    nums = re.findall(r"\d{4,}", t.replace(",", ""))
+
+    # ❗ avoid ref no (too long)
+    nums = [n for n in nums if 4 <= len(n) <= 7]
+
+    if nums:
+        return max(nums, key=lambda x: int(x))
+
+    return "unknown"
+
+
+def extract_bank(text):
+    t = text.lower()
+
+    if "kbz" in t:
+        return "KBZ"
+    elif "wave" in t:
+        return "Wave"
+    elif "aya" in t:
+        return "AYA"
+    elif "cb" in t:
+        return "CB"
     else:
-        # 👉 STEP 2: amount line detect
-        lines = text.split("\n")
-        for line in lines:
-            if "amount" in line.lower() or "total" in line.lower():
-                nums = re.findall(r"\d{3,}", line.replace(",", ""))
-                if nums:
-                    amount = nums[0]
-                    break
+        return "unknown"
 
-        # 👉 STEP 3: fallback (filter ref no)
-        if amount == "unknown":
-            nums = re.findall(r"\d{5,}", text_clean)
 
-            # 👉 remove too long numbers (ref no / phone)
-            filtered = [n for n in nums if len(n) <= 7]
+def extract_status(text):
+    t = text.lower()
 
-            if filtered:
-                amount = max(filtered, key=lambda x: int(x))
+    if "success" in t or "completed" in t or "thank" in t:
+        return "success"
 
-    # 👉 bank detect
-    if "kbz" in text_lower:
-        bank = "KBZ"
-    elif "wave" in text_lower:
-        bank = "Wave"
-    elif "aya" in text_lower:
-        bank = "AYA"
-    elif "cb" in text_lower:
-        bank = "CB"
-    elif "uab" in text_lower:
-        bank = "UAB"
-    else:
-        bank = "unknown"
-
-    # 👉 status detect
-    if "thank" in text_lower or "success" in text_lower or "completed" in text_lower:
-        status = "success"
-    else:
-        status = "unknown"
-
-    print("FINAL AMOUNT:", amount)
-    print("BANK:", bank)
-
-    return amount, bank, status
+    return "unknown"
 
 
 # 🚀 START
@@ -136,8 +119,6 @@ def start(message):
     user_source[user_id] = source
     user_first_message_saved[user_id] = False
 
-    print(f"START | {user_id} | {source}")
-
     send_to_sheet(user_id, source, "start", "start", "", "", "")
 
 
@@ -149,12 +130,11 @@ def handle_text(message):
     source = user_source.get(user_id, "unknown")
 
     if not user_first_message_saved.get(user_id, False):
-        print(f"FIRST MSG | {user_id} | {text}")
         send_to_sheet(user_id, source, "first_message", text, "", "", "")
         user_first_message_saved[user_id] = True
 
 
-# 📸 PHOTO HANDLER
+# 📸 PHOTO HANDLER (FINAL)
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.chat.id
@@ -165,7 +145,11 @@ def handle_photo(message):
 
         photo = message.photo[-1].file_id
         file_info = bot.get_file(photo)
-        downloaded_file = bot.download_file(file_info.file_path)
+
+        file_path = file_info.file_path
+        image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+
+        downloaded_file = bot.download_file(file_path)
 
         # 👉 preprocess
         image = Image.open(io.BytesIO(downloaded_file)).convert("L")
@@ -175,21 +159,28 @@ def handle_photo(message):
         image = enhancer.enhance(2)
 
         # 👉 OCR
-        text = pytesseract.image_to_string(image, lang='eng', config='--psm 6')
+        text = pytesseract.image_to_string(
+            image,
+            lang='eng',
+            config='--psm 6'
+        )
 
         print("OCR TEXT:\n", text)
 
-        if is_valid_slip(text):
-            amount, bank, status = extract_slip_data(text)
+        # 👉 check slip
+        if not is_valid_slip(text):
+            print("❌ NOT SLIP")
+            return
 
-            file_path = file_info.file_path
-            image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        # 👉 extract
+        amount = extract_amount(text)
+        bank = extract_bank(text)
+        status = extract_status(text)
 
-            print(f"VALID SLIP | {amount} | {bank}")
+        print("✅ RESULT:", amount, bank)
 
-            send_to_sheet(user_id, source, "deposit", image_url, amount, bank, status)
-        else:
-            print("IGNORE PHOTO")
+        # 👉 SAVE
+        send_to_sheet(user_id, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
         print("PHOTO ERROR:", e)
@@ -206,10 +197,9 @@ def webhook():
 
 @app.route("/")
 def home():
-    return "Bot Running 🚀"
+    return "Bot Running"
 
 
-# 🚀 RUN
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(
