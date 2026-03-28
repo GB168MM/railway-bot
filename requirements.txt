@@ -1,2 +1,5 @@
 pyTelegramBotAPI
 flask
+requests
+pytesseract
+Pillow
