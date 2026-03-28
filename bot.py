@@ -4,7 +4,7 @@ import os
 import requests
 from datetime import datetime
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import io
 import re
 
@@ -20,7 +20,7 @@ app = Flask(__name__)
 user_source = {}
 user_first_message_saved = {}
 
-# 👉 Google Sheets Webhook URL (ဒီမှာထည့်)
+# 👉 Google Sheets Webhook URL (ပြောင်းထည့်ပါ)
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycby5_bxl2uISK4WsD-uFxPTvGbcuc0ZJKKAhS-BQIXWxV4Bp2Dj-BWPqyOarg0iyoWKx_A/exec"
 
 
@@ -47,9 +47,13 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
 def is_valid_slip(text):
     text = text.lower()
 
+    # 👉 KBZ special detect
+    if "kbz" in text and "pay" in text:
+        return True
+
     currency = ["ks", "mmk", "ကျပ်"]
     bank = ["kbz", "wave", "aya", "cb", "uab"]
-    success = ["success", "completed", "successful", "done"]
+    success = ["success", "completed", "thank you"]
 
     has_currency = any(x in text for x in currency)
     has_bank = any(x in text for x in bank)
@@ -67,16 +71,15 @@ def is_valid_slip(text):
 def extract_slip_data(text):
     text_lower = text.lower()
 
-    # 👉 Extract all numbers
-    numbers = re.findall(r"\d[\d,\.]+", text)
+    # 👉 match amount like -200,000.00
+    match = re.findall(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?", text)
 
-    # 👉 choose biggest number (most likely amount)
-    amount = max(numbers, key=len) if numbers else "unknown"
+    amount = "unknown"
+    if match:
+        amount = max(match, key=len)
+        amount = amount.replace(",", "").replace("-", "")
 
-    # 👉 Clean amount (remove ,)
-    amount = amount.replace(",", "")
-
-    # 👉 Bank detect
+    # 👉 bank detect
     if "kbz" in text_lower:
         bank = "KBZ"
     elif "wave" in text_lower:
@@ -90,8 +93,8 @@ def extract_slip_data(text):
     else:
         bank = "unknown"
 
-    # 👉 Status detect
-    if "success" in text_lower or "completed" in text_lower:
+    # 👉 status detect
+    if "thank you" in text_lower or "success" in text_lower:
         status = "success"
     else:
         status = "unknown"
@@ -141,13 +144,21 @@ def handle_photo(message):
     source = user_source.get(user_id, "unknown")
 
     try:
+        print("PHOTO RECEIVED")
+
         photo = message.photo[-1].file_id
         file_info = bot.get_file(photo)
         downloaded_file = bot.download_file(file_info.file_path)
 
+        # 👉 Preprocess image (IMPORTANT 🔥)
+        image = Image.open(io.BytesIO(downloaded_file)).convert("L")
+        image = image.filter(ImageFilter.SHARPEN)
+
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(2)
+
         # 👉 OCR
-        image = Image.open(io.BytesIO(downloaded_file))
-        text = pytesseract.image_to_string(image)
+        text = pytesseract.image_to_string(image, lang='eng')
 
         print("OCR TEXT:\n", text)
 
