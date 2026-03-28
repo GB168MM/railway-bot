@@ -21,7 +21,7 @@ user_source = {}
 user_first_message_saved = {}
 
 # 👉 Google Sheets Webhook URL (ပြောင်းထည့်ပါ)
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycby5_bxl2uISK4WsD-uFxPTvGbcuc0ZJKKAhS-BQIXWxV4Bp2Dj-BWPqyOarg0iyoWKx_A/exec"
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
 # 🚀 SEND TO GOOGLE SHEETS
@@ -43,43 +43,41 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         print("Sheet Error:", e)
 
 
-# 🧠 SLIP DETECTION (SMART)
+# 🧠 SLIP DETECTION
 def is_valid_slip(text):
     text = text.lower()
 
-    # 👉 KBZ special detect
-    if "kbz" in text and "pay" in text:
+    if "kbz" in text and ("pay" in text or "bank" in text):
         return True
 
     currency = ["ks", "mmk", "ကျပ်"]
     bank = ["kbz", "wave", "aya", "cb", "uab"]
-    success = ["success", "completed", "thank you"]
+    success = ["success", "completed", "thank"]
 
-    has_currency = any(x in text for x in currency)
-    has_bank = any(x in text for x in bank)
-    has_success = any(x in text for x in success)
-    has_number = bool(re.search(r"\d+", text))
-
-    score = sum([has_currency, has_bank, has_success, has_number])
+    score = sum([
+        any(x in text for x in currency),
+        any(x in text for x in bank),
+        any(x in text for x in success),
+        bool(re.search(r"\d+", text))
+    ])
 
     print("SCORE:", score)
 
     return score >= 3
 
 
-# 🧠 EXTRACT DATA (IMPROVED 🔥)
+# 🧠 EXTRACT DATA (STRONG)
 def extract_slip_data(text):
     text_lower = text.lower()
 
-    # 👉 match amount like -200,000.00
-    match = re.findall(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?", text)
+    clean_text = text.replace(",", "").replace(" ", "").replace("-", "")
+
+    numbers = re.findall(r"\d{4,}", clean_text)
 
     amount = "unknown"
-    if match:
-        amount = max(match, key=len)
-        amount = amount.replace(",", "").replace("-", "")
+    if numbers:
+        amount = max(numbers, key=lambda x: int(x))
 
-    # 👉 bank detect
     if "kbz" in text_lower:
         bank = "KBZ"
     elif "wave" in text_lower:
@@ -93,16 +91,18 @@ def extract_slip_data(text):
     else:
         bank = "unknown"
 
-    # 👉 status detect
-    if "thank you" in text_lower or "success" in text_lower:
+    if "thank" in text_lower or "success" in text_lower or "completed" in text_lower:
         status = "success"
     else:
         status = "unknown"
 
+    print("AMOUNT:", amount)
+    print("BANK:", bank)
+
     return amount, bank, status
 
 
-# 🚀 START (SOURCE TRACK)
+# 🚀 START
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.chat.id
@@ -133,11 +133,9 @@ def handle_text(message):
         send_to_sheet(user_id, source, "first_message", text, "", "", "")
 
         user_first_message_saved[user_id] = True
-    else:
-        print(f"IGNORE TEXT | {user_id}")
 
 
-# 📸 PHOTO (OCR + SLIP DETECT + EXTRACT)
+# 📸 PHOTO HANDLER
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.chat.id
@@ -150,7 +148,7 @@ def handle_photo(message):
         file_info = bot.get_file(photo)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # 👉 Preprocess image (IMPORTANT 🔥)
+        # 👉 preprocess
         image = Image.open(io.BytesIO(downloaded_file)).convert("L")
         image = image.filter(ImageFilter.SHARPEN)
 
@@ -158,23 +156,22 @@ def handle_photo(message):
         image = enhancer.enhance(2)
 
         # 👉 OCR
-        text = pytesseract.image_to_string(image, lang='eng')
+        text = pytesseract.image_to_string(image, lang='eng', config='--psm 6')
 
         print("OCR TEXT:\n", text)
 
-        # 👉 Check slip
         if is_valid_slip(text):
             amount, bank, status = extract_slip_data(text)
 
             file_path = file_info.file_path
             image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
 
-            print(f"VALID SLIP | {user_id} | {amount} | {bank} | {status}")
+            print(f"VALID SLIP | {amount} | {bank}")
 
             send_to_sheet(user_id, source, "deposit", image_url, amount, bank, status)
 
         else:
-            print(f"IGNORE PHOTO | {user_id}")
+            print("IGNORE NON-SLIP")
 
     except Exception as e:
         print("PHOTO ERROR:", e)
@@ -189,7 +186,6 @@ def webhook():
     return "OK", 200
 
 
-# 🌐 HOME
 @app.route("/")
 def home():
     return "Bot Running 🚀"
