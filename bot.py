@@ -8,7 +8,7 @@ from PIL import Image
 import io
 import re
 
-# 👉 Tesseract Path (Railway Linux)
+# 👉 OCR path (Railway Linux)
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -24,7 +24,7 @@ user_first_message_saved = {}
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycby5_bxl2uISK4WsD-uFxPTvGbcuc0ZJKKAhS-BQIXWxV4Bp2Dj-BWPqyOarg0iyoWKx_A/exec"
 
 
-# 🚀 SEND DATA → GOOGLE SHEETS
+# 🚀 SEND TO GOOGLE SHEETS
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -43,35 +43,38 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         print("Sheet Error:", e)
 
 
-# 🧠 SLIP DETECTION (SCORE SYSTEM)
+# 🧠 SLIP DETECTION (SMART)
 def is_valid_slip(text):
     text = text.lower()
 
-    currency_keywords = ["ks", "mmk", "ကျပ်"]
-    bank_keywords = ["kbz", "wave", "aya", "cb", "uab"]
-    success_keywords = ["success", "completed", "successful", "done"]
+    currency = ["ks", "mmk", "ကျပ်"]
+    bank = ["kbz", "wave", "aya", "cb", "uab"]
+    success = ["success", "completed", "successful", "done"]
 
-    amount_pattern = re.findall(r"\d{1,3}(,\d{3})+", text)
+    has_currency = any(x in text for x in currency)
+    has_bank = any(x in text for x in bank)
+    has_success = any(x in text for x in success)
+    has_number = bool(re.search(r"\d+", text))
 
-    has_currency = any(k in text for k in currency_keywords)
-    has_bank = any(k in text for k in bank_keywords)
-    has_success = any(k in text for k in success_keywords)
-    has_amount = len(amount_pattern) > 0
+    score = sum([has_currency, has_bank, has_success, has_number])
 
-    score = sum([has_currency, has_bank, has_success, has_amount])
-
-    print(f"SCORE: {score}")
+    print("SCORE:", score)
 
     return score >= 3
 
 
-# 🧠 EXTRACT DATA
+# 🧠 EXTRACT DATA (IMPROVED 🔥)
 def extract_slip_data(text):
     text_lower = text.lower()
 
-    # 👉 Amount
-    amount_match = re.search(r"\d{1,3}(,\d{3})+", text)
-    amount = amount_match.group() if amount_match else "unknown"
+    # 👉 Extract all numbers
+    numbers = re.findall(r"\d[\d,\.]+", text)
+
+    # 👉 choose biggest number (most likely amount)
+    amount = max(numbers, key=len) if numbers else "unknown"
+
+    # 👉 Clean amount (remove ,)
+    amount = amount.replace(",", "")
 
     # 👉 Bank detect
     if "kbz" in text_lower:
@@ -87,7 +90,7 @@ def extract_slip_data(text):
     else:
         bank = "unknown"
 
-    # 👉 Status
+    # 👉 Status detect
     if "success" in text_lower or "completed" in text_lower:
         status = "success"
     else:
@@ -96,7 +99,7 @@ def extract_slip_data(text):
     return amount, bank, status
 
 
-# 🔥 START (source tracking)
+# 🚀 START (SOURCE TRACK)
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.chat.id
@@ -131,14 +134,13 @@ def handle_text(message):
         print(f"IGNORE TEXT | {user_id}")
 
 
-# 📸 PHOTO (OCR + FILTER + EXTRACT)
+# 📸 PHOTO (OCR + SLIP DETECT + EXTRACT)
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.chat.id
     source = user_source.get(user_id, "unknown")
 
     try:
-        # 👉 download photo
         photo = message.photo[-1].file_id
         file_info = bot.get_file(photo)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -149,7 +151,7 @@ def handle_photo(message):
 
         print("OCR TEXT:\n", text)
 
-        # 👉 detect slip
+        # 👉 Check slip
         if is_valid_slip(text):
             amount, bank, status = extract_slip_data(text)
 
