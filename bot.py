@@ -8,6 +8,7 @@ from PIL import Image
 import io
 import re
 
+# OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -21,7 +22,7 @@ first_msg_saved = {}
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
-# 👉 SEND
+# 👉 SEND DATA
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -35,28 +36,29 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     }
     try:
         requests.post(GOOGLE_SHEET_URL, json=data)
-    except:
-        pass
+    except Exception as e:
+        print("Sheet Error:", e)
 
 
-# 👉 Myanmar number
+# 👉 Myanmar → English numbers
 def mm_to_en(text):
-    return text.replace("၀","0").replace("၁","1").replace("၂","2").replace("၃","3")\
-               .replace("၄","4").replace("၅","5").replace("၆","6")\
-               .replace("၇","7").replace("၈","8").replace("၉","9")
+    return text.replace("၀","0").replace("၁","1").replace("၂","2")\
+               .replace("၃","3").replace("၄","4").replace("၅","5")\
+               .replace("၆","6").replace("၇","7").replace("၈","8")\
+               .replace("၉","9")
 
 
-# 🔥 SIMPLE AMOUNT (STABLE)
+# 👉 AMOUNT (SIMPLE + STABLE)
 def get_amount(text):
     text = mm_to_en(text)
     t = text.lower().replace(",", "")
 
-    # 👉 number + currency
+    # 1. number + currency
     match = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t)
     if match:
         return match[0][0]
 
-    # 👉 fallback → biggest reasonable number
+    # 2. fallback → biggest reasonable number
     nums = re.findall(r"\d{4,7}", t)
     if nums:
         return max(nums, key=lambda x: int(x))
@@ -94,27 +96,32 @@ def start(msg):
     user_source[uid] = source
     first_msg_saved[uid] = False
 
+    print("START:", uid, source)
+
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
 
-# 💬 FIRST MSG
+# 💬 FIRST MESSAGE ONLY
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
     if not first_msg_saved.get(uid, False):
+        print("FIRST MSG:", msg.text)
         send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
         first_msg_saved[uid] = True
 
 
-# 📸 PHOTO
+# 📸 PHOTO HANDLER (IMPORTANT FIXED)
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
     try:
+        print("📸 PHOTO RECEIVED")
+
         file_id = msg.photo[-1].file_id
         file_info = bot.get_file(file_id)
 
@@ -123,11 +130,17 @@ def photo(msg):
 
         file = bot.download_file(file_path)
 
+        # ❗ NO FILTER (important)
         image = Image.open(io.BytesIO(file)).convert("L")
 
-        text = pytesseract.image_to_string(image, lang='eng')
+        # 👉 OCR SIMPLE
+        text = pytesseract.image_to_string(
+            image,
+            lang='eng',
+            config='--psm 6'
+        )
 
-        print("OCR:", text)
+        print("OCR TEXT:\n", text)
 
         text = mm_to_en(text)
 
@@ -135,8 +148,9 @@ def photo(msg):
         bank = get_bank(text)
         status = get_status(text)
 
-        print("FINAL:", amount, bank)
+        print("FINAL:", amount, bank, status)
 
+        # 👉 ALWAYS SAVE
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
@@ -153,7 +167,7 @@ def webhook():
 
 @app.route("/")
 def home():
-    return "Running"
+    return "Bot Running"
 
 
 # 🚀 RUN
