@@ -12,7 +12,9 @@ import numpy as np
 
 # ================= CONFIG =================
 TOKEN = os.environ.get("BOT_TOKEN")
-APP_URL = os.environ.get("APP_URL")
+
+# 🔥 FIXED DOMAIN (NEW)
+APP_URL = "https://beautiful-delight-production-79cf.up.railway.app"
 
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
@@ -34,7 +36,6 @@ def mm_to_en(text):
     return text
 
 
-# 🔥 OCR error fix
 def clean_ocr_text(text):
     text = text.replace("J", "0")
     text = text.replace("O", "0")
@@ -42,16 +43,13 @@ def clean_ocr_text(text):
     return text
 
 
-# 🔥 preprocess
 def preprocess(image):
     img = np.array(image)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # sharpen
     kernel = np.array([[0,-1,0],[-1,5,-1],[0,-1,0]])
     sharp = cv2.filter2D(gray, -1, kernel)
 
-    # threshold
     _, thresh = cv2.threshold(sharp, 150, 255, cv2.THRESH_BINARY)
 
     return thresh
@@ -78,7 +76,6 @@ def get_amount(text, bank):
     if bank == "Wave":
         lines = text.split("\n")
 
-        # priority: Ks line
         for line in lines:
             l = clean_ocr_text(line)
 
@@ -87,7 +84,6 @@ def get_amount(text, bank):
                 if nums:
                     return nums[0]
 
-        # fallback → biggest decimal
         nums = re.findall(r"\d{3,}\.\d{2}", t)
         if nums:
             return max(nums, key=lambda x: float(x))
@@ -173,10 +169,8 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file))
 
-        # preprocess
         processed = preprocess(image)
 
-        # OCR 🔥 tuned
         text = pytesseract.image_to_string(
             processed,
             lang='eng+my',
@@ -218,6 +212,6 @@ def home():
 # ================= RUN =================
 
 if __name__ == "__main__":
-    bot.remove_webhook()
+    bot.delete_webhook()  # 🔥 IMPORTANT
     bot.set_webhook(url=f"{APP_URL}/{TOKEN}")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
