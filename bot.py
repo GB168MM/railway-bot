@@ -8,7 +8,7 @@ from PIL import Image
 import io
 import re
 
-# ================= OCR CONFIG =================
+# ================= OCR =================
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 # ================= BOT =================
@@ -21,7 +21,6 @@ user_source = {}
 first_msg_saved = {}
 
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
-
 
 # ================= SEND =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
@@ -40,7 +39,6 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     except Exception as e:
         print("Sheet Error:", e)
 
-
 # ================= UTIL =================
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
@@ -49,59 +47,75 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-
-# ================= SLIP CHECK =================
-def is_slip(text):
-    t = text.lower()
-    if "kbz" in t:
-        return True
-    if any(x in t for x in ["ကျပ်", "kyat", "mmk"]):
-        return True
-    return False
-
-
-# ================= AMOUNT (SMART TARGET 🔥) =================
-def get_amount(text):
+def clean_text(text):
     text = mm_to_en(text)
-    lines = text.split("\n")
 
-    # ========= WAVE =========
-    for i, line in enumerate(lines):
-        l = line.lower()
+    # 🔥 OCR FIX (VERY IMPORTANT)
+    text = text.replace("J", "2")   # Wave fix
+    text = text.replace("O", "0")
+    text = text.replace("o", "0")
 
-        if "အောင်မြင်" in l or "success" in l:
-            for j in range(i, min(i + 3, len(lines))):
-                clean = mm_to_en(lines[j]).replace(",", "")
-                nums = re.findall(r"\d{3,}", clean)
+    text = text.replace(",", "")
+    return text
 
-                if nums:
-                    print("WAVE DETECT:", nums)
-                    return nums[0]
+def join_numbers(text):
+    matches = re.findall(r"\d{2,}\s+\d{2,}", text)
+    return [m.replace(" ", "") for m in matches]
 
-    # ========= KBZ =========
-    candidates = []
+# ================= AMOUNT =================
+def get_amount(image):
+    width, height = image.size
 
-    for line in lines:
-        l = line.lower()
+    crops = [
+        image.crop((0, 0, width, int(height * 0.4))),   # TOP
+        image.crop((0, int(height * 0.4), width, int(height * 0.8)))  # MID
+    ]
 
-        # ❌ skip ref lines
-        if any(x in l for x in ["ref", "id", "transaction", "လုပ်ဆောင်"]):
-            continue
+    all_numbers = []
 
-        # ✅ only amount lines
-        if any(x in l for x in ["ks", "mmk", "ကျပ်"]):
-            clean = mm_to_en(line).replace(",", "")
-            nums = re.findall(r"\d{3,}", clean)
+    for crop in crops:
+        text = pytesseract.image_to_string(
+            crop,
+            lang='eng+my',
+            config='--psm 6'
+        )
 
-            candidates.extend(nums)
+        print("OCR PART:\n", text)
 
-    print("KBZ CANDIDATES:", candidates)
+        clean = clean_text(text)
 
-    if candidates:
-        return max(candidates, key=lambda x: int(x))
+        # decimal support
+        nums = re.findall(r"\d{3,}(?:\.\d{2})?", clean)
+
+        for n in nums:
+            n = n.replace(".00", "")
+            all_numbers.append(n)
+
+        # join split numbers
+        all_numbers.extend(join_numbers(clean))
+
+    print("ALL NUMBERS:", all_numbers)
+
+    valid = []
+
+    for n in all_numbers:
+        try:
+            val = int(n)
+
+            if val < 1000:
+                continue
+
+            if val > 10000000:
+                continue
+
+            valid.append(val)
+        except:
+            pass
+
+    if valid:
+        return str(max(valid))
 
     return "unknown"
-
 
 # ================= BANK =================
 def get_bank(text):
@@ -115,14 +129,14 @@ def get_bank(text):
 
     return "unknown"
 
-
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
+
     if any(x in t for x in ["success", "completed", "thank", "အောင်မြင်"]):
         return "success"
-    return "unknown"
 
+    return "unknown"
 
 # ================= START =================
 @bot.message_handler(commands=['start'])
@@ -138,7 +152,6 @@ def start(msg):
 
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
-
 # ================= TEXT =================
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
@@ -148,7 +161,6 @@ def first_msg(msg):
     if not first_msg_saved.get(uid, False):
         send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
         first_msg_saved[uid] = True
-
 
 # ================= PHOTO =================
 @bot.message_handler(content_types=['photo'])
@@ -164,25 +176,20 @@ def photo(msg):
         image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
 
         file = bot.download_file(file_path)
-
         image = Image.open(io.BytesIO(file)).convert("L")
 
-        # OCR
-        text = pytesseract.image_to_string(
+        # FULL TEXT
+        full_text = pytesseract.image_to_string(
             image,
             lang='eng+my',
             config='--psm 6'
         )
 
-        print("OCR TEXT:\n", text)
+        print("FULL OCR:\n", full_text)
 
-        if not is_slip(text):
-            print("NOT SLIP")
-            return
-
-        amount = get_amount(text)
-        bank = get_bank(text)
-        status = get_status(text)
+        amount = get_amount(image)
+        bank = get_bank(full_text)
+        status = get_status(full_text)
 
         print("FINAL:", amount, bank, status)
 
@@ -191,7 +198,6 @@ def photo(msg):
     except Exception as e:
         print("ERROR:", e)
 
-
 # ================= WEBHOOK =================
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -199,11 +205,9 @@ def webhook():
     bot.process_new_updates([update])
     return "OK"
 
-
 @app.route("/")
 def home():
     return "Bot Running"
-
 
 # ================= RUN =================
 if __name__ == "__main__":
