@@ -8,6 +8,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import io
 import re
 
+# OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -35,8 +36,8 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     }
     try:
         requests.post(GOOGLE_SHEET_URL, json=data)
-    except:
-        pass
+    except Exception as e:
+        print("Sheet Error:", e)
 
 
 # 👉 Myanmar → English
@@ -48,53 +49,44 @@ def mm_to_en(text):
     return text
 
 
-# 🔥 ADVANCED AMOUNT LOGIC
+# 🔥 FINAL AMOUNT LOGIC
 def get_amount(text):
     text = mm_to_en(text)
+
+    # remove commas
     t = text.lower().replace(",", "")
 
-    lines = text.split("\n")
+    print("CLEAN TEXT:", t)
+
     candidates = []
 
-    # ✅ 1. PRIORITY LINE (amount keywords)
-    for line in lines:
-        l = mm_to_en(line.lower())
+    # ✅ 1. JOIN SPLIT NUMBERS (2000 000 → 2000000)
+    joined = re.findall(r"\d{2,}\s+\d{2,}", t)
+    for j in joined:
+        num = j.replace(" ", "")
+        if 4 <= len(num) <= 8:
+            print("JOINED:", num)
+            candidates.append(num)
 
-        if any(k in l for k in ["amount", "total", "ငွေပမာဏ"]):
-            nums = re.findall(r"\d{3,}", l)
-            for n in nums:
-                if 3 <= len(n) <= 7:
-                    print("PRIORITY HIT:", n)
-                    return n
-
-    # ✅ 2. NUMBER + CURRENCY (BEST MATCH)
+    # ✅ 2. NUMBER + CURRENCY
     matches = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t)
     for m in matches:
         candidates.append(m[0])
 
     # ✅ 3. LINE WITH CURRENCY
-    for line in lines:
-        l = mm_to_en(line.lower())
-        if "ကျပ်" in l or "ks" in l or "mmk" in l:
-            nums = re.findall(r"\d{3,}", l)
+    for line in t.split("\n"):
+        if "ကျပ်" in line or "ks" in line or "mmk" in line:
+            nums = re.findall(r"\d{3,}", line)
             candidates.extend(nums)
 
-    # ✅ 4. FILTER VALID RANGE
-    candidates = [c for c in candidates if 3 <= len(c) <= 7]
+    # ✅ 4. FILTER VALID AMOUNT
+    candidates = [c for c in candidates if 4 <= len(c) <= 8]
 
     print("CANDIDATES:", candidates)
 
-    # ✅ 5. DUPLICATE CHECK (strong signal)
-    for c in candidates:
-        if candidates.count(c) >= 2:
-            print("DUPLICATE HIT:", c)
-            return c
-
-    # ✅ 6. NORMAL MAX
     if candidates:
         return max(candidates, key=lambda x: int(x))
 
-    # ❗ fallback
     return "unknown"
 
 
@@ -159,18 +151,18 @@ def photo(msg):
 
         file = bot.download_file(file_path)
 
-        # 🔥 preprocess
+        # preprocess
         image = Image.open(io.BytesIO(file)).convert("L")
         image = image.filter(ImageFilter.SHARPEN)
 
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(2.5)
 
-        # 🔥 OCR
+        # OCR (improved config)
         text = pytesseract.image_to_string(
             image,
             lang='eng',
-            config='--psm 6'
+            config='--psm 6 -c tessedit_char_whitelist=0123456789ksmmkကျပ်'
         )
 
         print("OCR TEXT:\n", text)
