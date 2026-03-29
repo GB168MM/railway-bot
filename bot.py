@@ -4,11 +4,10 @@ import os
 import requests
 from datetime import datetime
 import pytesseract
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image
 import io
 import re
 
-# OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -36,56 +35,31 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     }
     try:
         requests.post(GOOGLE_SHEET_URL, json=data)
-    except Exception as e:
-        print("Sheet Error:", e)
+    except:
+        pass
 
 
-# 👉 Myanmar → English
+# 👉 Myanmar number
 def mm_to_en(text):
-    mm = "၀၁၂၃၄၅၆၇၈၉"
-    en = "0123456789"
-    for m, e in zip(mm, en):
-        text = text.replace(m, e)
-    return text
+    return text.replace("၀","0").replace("၁","1").replace("၂","2").replace("၃","3")\
+               .replace("၄","4").replace("၅","5").replace("၆","6")\
+               .replace("၇","7").replace("၈","8").replace("၉","9")
 
 
-# 🔥 FINAL AMOUNT LOGIC
+# 🔥 SIMPLE AMOUNT (STABLE)
 def get_amount(text):
     text = mm_to_en(text)
-
-    # remove commas
     t = text.lower().replace(",", "")
 
-    print("CLEAN TEXT:", t)
+    # 👉 number + currency
+    match = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t)
+    if match:
+        return match[0][0]
 
-    candidates = []
-
-    # ✅ 1. JOIN SPLIT NUMBERS (2000 000 → 2000000)
-    joined = re.findall(r"\d{2,}\s+\d{2,}", t)
-    for j in joined:
-        num = j.replace(" ", "")
-        if 4 <= len(num) <= 8:
-            print("JOINED:", num)
-            candidates.append(num)
-
-    # ✅ 2. NUMBER + CURRENCY
-    matches = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t)
-    for m in matches:
-        candidates.append(m[0])
-
-    # ✅ 3. LINE WITH CURRENCY
-    for line in t.split("\n"):
-        if "ကျပ်" in line or "ks" in line or "mmk" in line:
-            nums = re.findall(r"\d{3,}", line)
-            candidates.extend(nums)
-
-    # ✅ 4. FILTER VALID AMOUNT
-    candidates = [c for c in candidates if 4 <= len(c) <= 8]
-
-    print("CANDIDATES:", candidates)
-
-    if candidates:
-        return max(candidates, key=lambda x: int(x))
+    # 👉 fallback → biggest reasonable number
+    nums = re.findall(r"\d{4,7}", t)
+    if nums:
+        return max(nums, key=lambda x: int(x))
 
     return "unknown"
 
@@ -95,9 +69,9 @@ def get_bank(text):
     t = text.lower()
     if "kbz" in t:
         return "KBZ"
-    if "wave" in t or "money" in t or "ကျပ်" in t:
+    if "wave" in t or "ကျပ်" in t:
         return "Wave"
-    return "Wave"
+    return "unknown"
 
 
 # 👉 STATUS
@@ -141,8 +115,6 @@ def photo(msg):
     source = user_source.get(uid, "unknown")
 
     try:
-        print("📸 PHOTO RECEIVED")
-
         file_id = msg.photo[-1].file_id
         file_info = bot.get_file(file_id)
 
@@ -151,33 +123,19 @@ def photo(msg):
 
         file = bot.download_file(file_path)
 
-        # preprocess
         image = Image.open(io.BytesIO(file)).convert("L")
-        image = image.filter(ImageFilter.SHARPEN)
 
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(2.5)
+        text = pytesseract.image_to_string(image, lang='eng')
 
-        # OCR (improved config)
-        text = pytesseract.image_to_string(
-            image,
-            lang='eng',
-            config='--psm 6 -c tessedit_char_whitelist=0123456789ksmmkကျပ်'
-        )
-
-        print("OCR TEXT:\n", text)
+        print("OCR:", text)
 
         text = mm_to_en(text)
 
         amount = get_amount(text)
-
-        if amount == "0" or amount == "":
-            amount = "unknown"
-
         bank = get_bank(text)
         status = get_status(text)
 
-        print("FINAL:", amount, bank, status)
+        print("FINAL:", amount, bank)
 
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
