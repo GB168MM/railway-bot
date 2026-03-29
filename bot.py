@@ -49,7 +49,7 @@ def mm_to_en(text):
 
 def clean_text(text):
     text = mm_to_en(text)
-    text = text.replace("J", "2")
+    text = text.replace("၂", "2")
     text = text.replace("O", "0")
     text = text.replace("o", "0")
     text = text.replace(",", "")
@@ -103,35 +103,45 @@ def extract_kbz_amount(text):
 
 # ================= WAVE (FINAL FIX 🔥) =================
 def extract_wave_amount(image):
-    text = pytesseract.image_to_string(image, lang='eng+my')
+    width, height = image.size
 
-    print("FULL OCR:", text)
+    # 👉 TOP + MID scan
+    areas = [
+        image.crop((0, 0, width, int(height * 0.35))),
+        image.crop((0, int(height * 0.35), width, int(height * 0.75)))
+    ]
 
-    # 👉 Myanmar numbers first
-    mm_match = re.findall(r"[၀-၉,]+", text)
+    results = []
 
-    if mm_match:
-        nums = []
-        for m in mm_match:
-            val = int(mm_to_en(m).replace(",", ""))
+    for area in areas:
+        text = pytesseract.image_to_string(
+            area,
+            lang='eng',
+            config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
+        )
 
-            if 1000 < val < 10000000:
-                nums.append(val)
+        print("WAVE OCR:", text)
 
-        if nums:
-            return str(max(nums))
+        text = text.replace(",", "")
+        text = text.replace("၂", "2")
+        text = text.replace("၀", "0")
 
-    # 👉 fallback English OCR
-    text = text.replace(",", "")
-    text = text.replace("J", "2")
-    text = text.replace("O", "0")
+        nums = re.findall(r"\d{4,}", text)
 
-    nums = re.findall(r"\d{4,}", text)
+        for n in nums:
+            val = int(n)
 
-    valid = [int(n) for n in nums if 1000 < int(n) < 10000000]
+            if val < 1000:
+                continue
+            if val > 10000000:
+                continue
 
-    if valid:
-        return str(max(valid))
+            results.append(val)
+
+    print("WAVE RESULTS:", results)
+
+    if results:
+        return str(max(results))
 
     return "unknown"
 
@@ -182,6 +192,7 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
+        # FULL OCR
         text = pytesseract.image_to_string(image, lang='eng+my')
 
         print("OCR TEXT:\n", text)
