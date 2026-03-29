@@ -59,11 +59,10 @@ def clean_text(text):
 def detect_bank(image, text):
     t = text.lower()
 
-    # KBZ
     if "kbz" in t:
         return "KBZ"
 
-    # 🔥 Wave (yellow detect)
+    # Wave (yellow detect)
     small = image.resize((50,50))
     pixels = list(small.getdata())
 
@@ -75,7 +74,6 @@ def detect_bank(image, text):
     if yellow > 500:
         return "Wave"
 
-    # fallback
     if "ကျပ်" in t or "အောင်မြင်" in t:
         return "Wave"
 
@@ -93,7 +91,6 @@ def extract_kbz_amount(text):
 
         if val < 1000:
             continue
-
         if val > 10000000:
             continue
 
@@ -104,41 +101,47 @@ def extract_kbz_amount(text):
 
     return "unknown"
 
-# ================= WAVE =================
+# ================= WAVE (FINAL FIX 🔥) =================
 def extract_wave_amount(image):
     width, height = image.size
 
-    # 🔥 TOP AREA ONLY
-    top = image.crop((0, 0, width, int(height * 0.35)))
+    # 👉 TOP + MID scan
+    areas = [
+        image.crop((0, 0, width, int(height * 0.35))),
+        image.crop((0, int(height * 0.35), width, int(height * 0.75)))
+    ]
 
-    text = pytesseract.image_to_string(
-        top,
-        lang='eng',
-        config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
-    )
+    results = []
 
-    print("WAVE OCR:", text)
+    for area in areas:
+        text = pytesseract.image_to_string(
+            area,
+            lang='eng',
+            config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
+        )
 
-    text = text.replace(",", "")
-    text = text.replace("J", "2")
-    text = text.replace("O", "0")
+        print("WAVE OCR:", text)
 
-    nums = re.findall(r"\d{4,}", text)
+        text = text.replace(",", "")
+        text = text.replace("J", "2")
+        text = text.replace("O", "0")
 
-    valid = []
-    for n in nums:
-        val = int(n)
+        nums = re.findall(r"\d{4,}", text)
 
-        if val < 1000:
-            continue
+        for n in nums:
+            val = int(n)
 
-        if val > 10000000:
-            continue
+            if val < 1000:
+                continue
+            if val > 10000000:
+                continue
 
-        valid.append(val)
+            results.append(val)
 
-    if valid:
-        return str(max(valid))
+    print("WAVE RESULTS:", results)
+
+    if results:
+        return str(max(results))
 
     return "unknown"
 
