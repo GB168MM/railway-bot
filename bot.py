@@ -48,7 +48,7 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-# ================= SLIP =================
+# ================= SLIP CHECK =================
 def is_slip(text):
     t = text.lower()
 
@@ -58,50 +58,27 @@ def is_slip(text):
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
         return True
 
-    if re.findall(r"\d{4,}", t):
-        return True
-
     return False
 
-# ================= AMOUNT (ULTIMATE FIX) =================
+# ================= AMOUNT =================
 def get_amount(text):
     text = mm_to_en(text)
 
     # remove comma
     t = text.replace(",", "")
 
-    # 🔥 FIX 1: join numbers with space → 20 000 → 20000
+    # fix OCR split → 20 000 → 20000
     t = re.sub(r"(\d)\s+(\d)", r"\1\2", t)
 
-    # 🔥 FIX 2: only check lines with amount keywords first
-    lines = t.split("\n")
-    priority_nums = []
-
-    for line in lines:
-        if any(x in line.lower() for x in ["amount", "total", "ကျပ", "kyat"]):
-            nums = re.findall(r"\d{3,}", line)
-            for n in nums:
-                val = int(n)
-                if 1000 <= val <= 10000000:
-                    priority_nums.append(val)
-
-    if priority_nums:
-        return str(max(priority_nums))
-
-    # 🔥 fallback
     nums = re.findall(r"\d+", t)
 
     valid = []
     for n in nums:
         val = int(n)
 
-        if val < 5000:
-            continue
-
-        if val > 10000000:
-            continue
-
-        valid.append(val)
+        # filter realistic money only
+        if 1000 <= val <= 1000000:
+            valid.append(val)
 
     if valid:
         return str(max(valid))
@@ -116,9 +93,6 @@ def get_bank(text):
         return "KBZ"
 
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
-        return "Wave"
-
-    if re.findall(r"\d{4,}", t):
         return "Wave"
 
     return "unknown"
@@ -177,9 +151,7 @@ def photo(msg):
             config='--psm 6'
         )
 
-        print("========== OCR ==========")
-        print(text)
-        print("=========================")
+        print("OCR TEXT:\n", text)
 
         if not is_slip(text):
             print("NOT SLIP")
