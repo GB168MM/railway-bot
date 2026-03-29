@@ -12,6 +12,8 @@ import re
 TOKEN = os.environ.get("BOT_TOKEN")
 APP_URL = "https://beautiful-delight-production-79cf.up.railway.app"
 
+print("TOKEN =", TOKEN)
+
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -29,70 +31,40 @@ def clean(text):
     return text
 
 
-# ================= BANK =================
-
 def get_bank(text):
     t = text.lower()
 
-    if "kbz" in t:
+    if any(x in t for x in ["kbz", "kpay", "k-pay"]):
         return "KBZ"
 
-    if "wave" in t or "money" in t:
+    if any(x in t for x in ["wave", "wav", "money"]):
         return "Wave"
 
     return "unknown"
 
 
-# ================= AMOUNT =================
-
-def get_amount_wave(text):
+def get_amount(text, bank):
     text = clean(text)
 
-    # Wave slip usually has decimal amount
-    nums = re.findall(r"\d{3,}\.\d{2}", text)
-    if nums:
-        return max(nums, key=lambda x: float(x))
+    # Wave
+    if bank == "Wave":
+        nums = re.findall(r"\d{3,}\.\d{2}", text)
+        if nums:
+            return max(nums, key=lambda x: float(x))
 
-    return "unknown"
+    # KBZ
+    if bank == "KBZ":
+        nums = re.findall(r"\d{4,7}", text)
+        if nums:
+            return max(nums, key=lambda x: int(x))
 
-
-def get_amount_kbz(text):
-    text = clean(text)
-
-    # KBZ: often integer big number
+    # fallback
     nums = re.findall(r"\d{4,7}", text)
-
-    # filter unrealistic numbers
-    nums = [n for n in nums if int(n) < 10000000]
-
     if nums:
         return max(nums, key=lambda x: int(x))
 
     return "unknown"
 
-
-def get_amount(text, bank):
-    if bank == "Wave":
-        return get_amount_wave(text)
-
-    if bank == "KBZ":
-        return get_amount_kbz(text)
-
-    return "unknown"
-
-
-# ================= STATUS =================
-
-def get_status(text):
-    t = text.lower()
-
-    if any(x in t for x in ["success", "completed", "sent", "paid", "အောင်မြင်"]):
-        return "success"
-
-    return "unknown"
-
-
-# ================= SHEET =================
 
 def send_to_sheet(user_id, amount, bank, status, image_url):
     data = {
@@ -105,7 +77,7 @@ def send_to_sheet(user_id, amount, bank, status, image_url):
     }
     try:
         res = requests.post(GOOGLE_SHEET_URL, json=data)
-        print("SHEET:", res.status_code)
+        print("SHEET STATUS:", res.status_code)
     except Exception as e:
         print("SHEET ERROR:", e)
 
@@ -114,6 +86,8 @@ def send_to_sheet(user_id, amount, bank, status, image_url):
 
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
+    print("📸 PHOTO RECEIVED")
+
     uid = msg.chat.id
 
     try:
@@ -123,26 +97,23 @@ def photo(msg):
         file = bot.download_file(file_info.file_path)
         image = Image.open(io.BytesIO(file))
 
-        # 🔥 OCR 2 PASS
-        text1 = pytesseract.image_to_string(image, lang='eng+my', config='--psm 6')
-        text2 = pytesseract.image_to_string(image, lang='eng+my', config='--psm 11')
+        # 🔥 OCR
+        text = pytesseract.image_to_string(image, lang='eng+my')
 
-        text = text1 + "\n" + text2
-
-        print("OCR:\n", text)
+        print("========== OCR RAW ==========")
+        print(text)
+        print("=============================")
 
         bank = get_bank(text)
         amount = get_amount(text, bank)
-        status = get_status(text)
 
-        print("RESULT:", bank, amount)
+        print("BANK =", bank)
+        print("AMOUNT =", amount)
 
-        if bank != "unknown" and amount != "unknown":
-            image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
-            send_to_sheet(uid, amount, bank, status, image_url)
+        image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
 
-        else:
-            print("❌ NOT DETECTED")
+        # 🔥 ALWAYS SEND (debug)
+        send_to_sheet(uid, amount, bank, "test", image_url)
 
     except Exception as e:
         print("ERROR:", e)
@@ -150,14 +121,14 @@ def photo(msg):
 
 # ================= WEBHOOK =================
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
     return "Running"
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    print("Webhook HIT")
+    print("🔥 Webhook HIT")
     update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
     bot.process_new_updates([update])
     return "OK"
@@ -167,6 +138,9 @@ def webhook():
 
 if __name__ == "__main__":
     bot.delete_webhook()
-    bot.set_webhook(url=f"{APP_URL}/webhook")
+
+    bot.set_webhook(
+        url="https://beautiful-delight-production-79cf.up.railway.app/webhook"
+    )
 
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
