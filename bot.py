@@ -12,9 +12,9 @@ import numpy as np
 
 # ================= CONFIG =================
 TOKEN = os.environ.get("BOT_TOKEN")
-
-# 🔥 FIXED DOMAIN (NEW)
 APP_URL = "https://beautiful-delight-production-79cf.up.railway.app"
+
+print("TOKEN =", TOKEN)  # 🔥 DEBUG
 
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
@@ -72,13 +72,11 @@ def get_amount(text, bank):
 
     t = text.lower().replace(",", "")
 
-    # ---------- WAVE ----------
+    # Wave
     if bank == "Wave":
         lines = text.split("\n")
-
         for line in lines:
             l = clean_ocr_text(line)
-
             if "ks" in l.lower() or "ကျပ်" in l:
                 nums = re.findall(r"\d{3,}\.\d{2}", l.replace(",", ""))
                 if nums:
@@ -88,13 +86,13 @@ def get_amount(text, bank):
         if nums:
             return max(nums, key=lambda x: float(x))
 
-    # ---------- KBZ ----------
+    # KBZ
     if bank == "KBZ":
         nums = re.findall(r"-?\d{4,}\.\d{2}", t)
         if nums:
             return nums[0].replace("-", "")
 
-    # ---------- COMMON ----------
+    # fallback
     nums = re.findall(r"\d{3,7}", t)
     nums = [n for n in nums if len(n) <= 7]
 
@@ -123,9 +121,10 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         "time": str(datetime.now())
     }
     try:
-        requests.post(GOOGLE_SHEET_URL, json=data)
-    except:
-        pass
+        res = requests.post(GOOGLE_SHEET_URL, json=data)
+        print("SHEET STATUS:", res.status_code, res.text)  # 🔥 DEBUG
+    except Exception as e:
+        print("SHEET ERROR:", e)
 
 
 # ================= BOT =================
@@ -182,6 +181,7 @@ def photo(msg):
         bank = get_bank(text)
 
         if bank == "unknown":
+            print("NOT SLIP")
             return
 
         amount = get_amount(text, bank)
@@ -197,21 +197,27 @@ def photo(msg):
 
 # ================= WEBHOOK =================
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
-    bot.process_new_updates([update])
-    return "OK"
-
-
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
     return "Running"
+
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    print("Webhook HIT")  # 🔥 DEBUG
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "OK"
 
 
 # ================= RUN =================
 
 if __name__ == "__main__":
-    bot.delete_webhook()  # 🔥 IMPORTANT
+    if not TOKEN:
+        print("❌ ERROR: BOT_TOKEN missing")
+
+    bot.delete_webhook()  # 🔥 reset
     bot.set_webhook(url=f"{APP_URL}/{TOKEN}")
+
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
