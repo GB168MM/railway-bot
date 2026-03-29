@@ -49,7 +49,7 @@ def mm_to_en(text):
 
 def clean_text(text):
     text = mm_to_en(text)
-    text = text.replace("J", "2")
+    text = text.replace("၂", "2")
     text = text.replace("O", "0")
     text = text.replace("o", "0")
     text = text.replace(",", "")
