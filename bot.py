@@ -8,6 +8,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import io
 import re
 
+# OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -21,7 +22,7 @@ first_msg_saved = {}
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
-# 👉 SEND DATA
+# 👉 SEND TO SHEET
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -35,11 +36,11 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     }
     try:
         requests.post(GOOGLE_SHEET_URL, json=data)
-    except:
-        pass
+    except Exception as e:
+        print("Sheet Error:", e)
 
 
-# 👉 Myanmar → English digits
+# 👉 Myanmar number → English
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
     en = "0123456789"
@@ -48,44 +49,39 @@ def mm_to_en(text):
     return text
 
 
-# 👉 SLIP CHECK (Wave + KBZ)
-def is_slip(text):
-    t = text.lower()
-    keywords = ["kbz", "wave", "money", "ကျပ်", "transfer", "success"]
-    score = sum([1 for k in keywords if k in t])
-    return score >= 2
-
-
-# 👉 SMART AMOUNT (FINAL LOGIC)
+# 👉 AMOUNT EXTRACT (robust)
 def get_amount(text):
     text = mm_to_en(text)
     t = text.lower().replace(",", "")
 
+    print("TEXT FOR AMOUNT:\n", t)
+
     candidates = []
 
-    # ✅ STEP 1: find "xxx ကျပ်"
-    matches = re.findall(r"(\d{3,})\s*ကျပ်", t)
+    # STEP 1: xxx ကျပ် / ks / mmk
+    matches = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t)
     for m in matches:
-        candidates.append(m)
+        candidates.append(m[0])
 
-    # ✅ STEP 2: find lines containing ကျပ်
+    # STEP 2: line-based detect
     for line in text.split("\n"):
         l = mm_to_en(line.lower())
-        if "ကျပ်" in l:
+        if "ကျပ်" in l or "mmk" in l or "ks" in l:
             nums = re.findall(r"\d{3,}", l.replace(",", ""))
-            for n in nums:
-                candidates.append(n)
+            candidates.extend(nums)
 
-    # ✅ STEP 3: filter valid amount range
+    # STEP 3: filter realistic amount
     candidates = [c for c in candidates if 3 <= len(c) <= 7]
 
+    print("CANDIDATES:", candidates)
+
     if candidates:
-        # 👉 choose biggest value (usually real amount)
         return max(candidates, key=lambda x: int(x))
 
-    # ❗ fallback (rare)
+    # STEP 4: fallback
     nums = re.findall(r"\d{4,}", t)
     nums = [n for n in nums if 4 <= len(n) <= 7]
+
     if nums:
         return max(nums, key=lambda x: int(x))
 
@@ -122,6 +118,8 @@ def start(msg):
     user_source[uid] = source
     first_msg_saved[uid] = False
 
+    print("START:", uid, source)
+
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
 
@@ -132,17 +130,20 @@ def first_msg(msg):
     source = user_source.get(uid, "unknown")
 
     if not first_msg_saved.get(uid, False):
+        print("FIRST MSG:", msg.text)
         send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
         first_msg_saved[uid] = True
 
 
-# 📸 PHOTO OCR
+# 📸 PHOTO HANDLER (NO FILTER ❗)
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
     try:
+        print("📸 PHOTO RECEIVED")
+
         file_id = msg.photo[-1].file_id
         file_info = bot.get_file(file_id)
 
@@ -151,33 +152,30 @@ def photo(msg):
 
         file = bot.download_file(file_path)
 
-        # 🔥 IMAGE PREPROCESS (important)
+        # 👉 IMAGE PREPROCESS
         image = Image.open(io.BytesIO(file)).convert("L")
         image = image.filter(ImageFilter.SHARPEN)
 
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(2.5)
 
-        # 🔥 OCR
+        # 👉 OCR
         text = pytesseract.image_to_string(
             image,
             lang='eng',
             config='--psm 6'
         )
 
-        print("OCR:\n", text)
+        print("OCR RAW TEXT:\n", text)
 
-        # 👉 check slip
-        if not is_slip(text):
-            print("NOT SLIP")
-            return
-
+        # 👉 EXTRACT
         amount = get_amount(text)
         bank = get_bank(text)
         status = get_status(text)
 
-        print("FINAL:", amount, bank)
+        print("FINAL RESULT:", amount, bank, status)
 
+        # 👉 ALWAYS SAVE (no filter)
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
@@ -194,7 +192,7 @@ def webhook():
 
 @app.route("/")
 def home():
-    return "Running"
+    return "Bot Running"
 
 
 # 🚀 RUN
