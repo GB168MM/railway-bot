@@ -49,36 +49,32 @@ def mm_to_en(text):
     return text
 
 
-# 👉 AMOUNT EXTRACT (robust)
+# 👉 AMOUNT EXTRACT (STRONG)
 def get_amount(text):
     text = mm_to_en(text)
     t = text.lower().replace(",", "")
 
-    print("TEXT FOR AMOUNT:\n", t)
-
     candidates = []
 
-    # STEP 1: xxx ကျပ် / ks / mmk
+    # 1. currency detect
     matches = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t)
     for m in matches:
         candidates.append(m[0])
 
-    # STEP 2: line-based detect
+    # 2. line scan
     for line in text.split("\n"):
         l = mm_to_en(line.lower())
         if "ကျပ်" in l or "mmk" in l or "ks" in l:
             nums = re.findall(r"\d{3,}", l.replace(",", ""))
             candidates.extend(nums)
 
-    # STEP 3: filter realistic amount
+    # 3. filter realistic
     candidates = [c for c in candidates if 3 <= len(c) <= 7]
-
-    print("CANDIDATES:", candidates)
 
     if candidates:
         return max(candidates, key=lambda x: int(x))
 
-    # STEP 4: fallback
+    # 4. fallback
     nums = re.findall(r"\d{4,}", t)
     nums = [n for n in nums if 4 <= len(n) <= 7]
 
@@ -88,21 +84,26 @@ def get_amount(text):
     return "unknown"
 
 
-# 👉 BANK
+# 👉 BANK DETECT
 def get_bank(text):
     t = text.lower()
+
     if "kbz" in t:
         return "KBZ"
+
     if "wave" in t or "money" in t or "ကျပ်" in t:
         return "Wave"
-    return "unknown"
+
+    return "Wave"   # 👉 fallback (important)
 
 
 # 👉 STATUS
 def get_status(text):
     t = text.lower()
+
     if "success" in t or "completed" in t or "အောင်မြင်" in t:
         return "success"
+
     return "unknown"
 
 
@@ -135,7 +136,7 @@ def first_msg(msg):
         first_msg_saved[uid] = True
 
 
-# 📸 PHOTO HANDLER (NO FILTER ❗)
+# 📸 PHOTO HANDLER (FINAL FIXED)
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
     uid = msg.chat.id
@@ -152,7 +153,7 @@ def photo(msg):
 
         file = bot.download_file(file_path)
 
-        # 👉 IMAGE PREPROCESS
+        # 👉 preprocess
         image = Image.open(io.BytesIO(file)).convert("L")
         image = image.filter(ImageFilter.SHARPEN)
 
@@ -166,16 +167,25 @@ def photo(msg):
             config='--psm 6'
         )
 
-        print("OCR RAW TEXT:\n", text)
+        print("OCR TEXT:\n", text)
 
-        # 👉 EXTRACT
+        # 👉 convert
+        text = mm_to_en(text)
+
+        # 👉 amount
         amount = get_amount(text)
+
+        # 👉 fix invalid amount
+        if amount == "0" or amount == "":
+            amount = "unknown"
+
+        # 👉 bank + status
         bank = get_bank(text)
         status = get_status(text)
 
-        print("FINAL RESULT:", amount, bank, status)
+        print("FINAL:", amount, bank, status)
 
-        # 👉 ALWAYS SAVE (no filter)
+        # 👉 ALWAYS SAVE
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
