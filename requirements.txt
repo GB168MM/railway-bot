@@ -1,5 +1,7 @@
+opencv-python-headless
+numpy
+pytesseract
+Pillow
 pyTelegramBotAPI
 flask
 requests
-pytesseract
-Pillow
