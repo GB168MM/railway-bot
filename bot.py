@@ -10,8 +10,6 @@ import re
 
 # ================= OCR CONFIG =================
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
-
-# 🔥 IMPORTANT (Myanmar OCR fix)
 os.environ["TESSDATA_PREFIX"] = "/usr/share/tesseract-ocr/4.00/tessdata"
 
 # ================= BOT =================
@@ -54,15 +52,20 @@ def mm_to_en(text):
     return text
 
 
-# ================= SLIP CHECK =================
+# ================= SLIP CHECK (STRONG) =================
 def is_slip(text):
     t = text.lower()
 
     if "kbz" in t:
         return True
 
-    # 🔥 Myanmar Wave detect
-    if "ကျပ်" in text:
+    # 🔥 Wave tolerant
+    if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
+        return True
+
+    # 🔥 fallback: any big number
+    nums = re.findall(r"\d{4,}", t)
+    if nums:
         return True
 
     return False
@@ -73,18 +76,9 @@ def get_amount(text):
     text = mm_to_en(text)
     t = text.replace(",", "")
 
-    # 🔥 Myanmar Wave
-    match = re.findall(r"(\d{3,})\s*ကျပ်", t)
-    if match:
-        return match[0]
+    # 🔥 extract all numbers
+    nums = re.findall(r"\d{3,}", t)
 
-    # decimal fallback
-    nums = re.findall(r"\d{3,}\.\d{2}", t)
-    if nums:
-        return max(nums, key=lambda x: float(x))
-
-    # general fallback
-    nums = re.findall(r"\d{4,7}", t)
     if nums:
         return max(nums, key=lambda x: int(x))
 
@@ -98,7 +92,13 @@ def get_bank(text):
     if "kbz" in t:
         return "KBZ"
 
-    if "ကျပ်" in text:
+    # 🔥 Wave tolerant
+    if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
+        return "Wave"
+
+    # 🔥 fallback
+    nums = re.findall(r"\d{4,}", t)
+    if nums:
         return "Wave"
 
     return "unknown"
@@ -160,10 +160,10 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file))
 
-        # 🔥 DEBUG language check
+        # 🔥 DEBUG LANG
         print("LANGS:", pytesseract.get_languages(config=''))
 
-        # 🔥 OCR (Myanmar + English)
+        # 🔥 OCR
         text = pytesseract.image_to_string(
             image,
             lang='eng+my',
