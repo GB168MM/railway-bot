@@ -8,7 +8,7 @@ from PIL import Image
 import io
 import re
 
-# ================= OCR CONFIG =================
+# ================= OCR =================
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 os.environ["TESSDATA_PREFIX"] = "/usr/share/tesseract-ocr/4.00/tessdata"
 
@@ -22,7 +22,6 @@ user_source = {}
 first_msg_saved = {}
 
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
-
 
 # ================= SHEET =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
@@ -38,9 +37,8 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     }
     try:
         requests.post(GOOGLE_SHEET_URL, json=data)
-    except:
-        pass
-
+    except Exception as e:
+        print("SHEET ERROR:", e)
 
 # ================= UTIL =================
 def mm_to_en(text):
@@ -50,8 +48,7 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-
-# ================= SLIP CHECK =================
+# ================= SLIP =================
 def is_slip(text):
     t = text.lower()
 
@@ -61,29 +58,46 @@ def is_slip(text):
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
         return True
 
-    # fallback
     if re.findall(r"\d{4,}", t):
         return True
 
     return False
 
-
-# ================= AMOUNT (FINAL FIX 🔥) =================
+# ================= AMOUNT (ULTIMATE FIX) =================
 def get_amount(text):
     text = mm_to_en(text)
+
+    # remove comma
     t = text.replace(",", "")
 
+    # 🔥 FIX 1: join numbers with space → 20 000 → 20000
+    t = re.sub(r"(\d)\s+(\d)", r"\1\2", t)
+
+    # 🔥 FIX 2: only check lines with amount keywords first
+    lines = t.split("\n")
+    priority_nums = []
+
+    for line in lines:
+        if any(x in line.lower() for x in ["amount", "total", "ကျပ", "kyat"]):
+            nums = re.findall(r"\d{3,}", line)
+            for n in nums:
+                val = int(n)
+                if 1000 <= val <= 10000000:
+                    priority_nums.append(val)
+
+    if priority_nums:
+        return str(max(priority_nums))
+
+    # 🔥 fallback
     nums = re.findall(r"\d+", t)
 
     valid = []
     for n in nums:
         val = int(n)
 
-        # ❌ OCR error small numbers
         if val < 5000:
             continue
 
-        # ❌ txn id big numbers
         if val > 10000000:
             continue
 
@@ -93,7 +107,6 @@ def get_amount(text):
         return str(max(valid))
 
     return "unknown"
-
 
 # ================= BANK =================
 def get_bank(text):
@@ -110,14 +123,12 @@ def get_bank(text):
 
     return "unknown"
 
-
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
     if any(x in t for x in ["success", "completed", "thank", "အောင်မြင်"]):
         return "success"
     return "unknown"
-
 
 # ================= START =================
 @bot.message_handler(commands=['start'])
@@ -133,7 +144,6 @@ def start(msg):
 
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
-
 # ================= TEXT =================
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
@@ -143,7 +153,6 @@ def first_msg(msg):
     if not first_msg_saved.get(uid, False):
         send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
         first_msg_saved[uid] = True
-
 
 # ================= PHOTO =================
 @bot.message_handler(content_types=['photo'])
@@ -168,7 +177,9 @@ def photo(msg):
             config='--psm 6'
         )
 
-        print("OCR:\n", text)
+        print("========== OCR ==========")
+        print(text)
+        print("=========================")
 
         if not is_slip(text):
             print("NOT SLIP")
@@ -185,7 +196,6 @@ def photo(msg):
     except Exception as e:
         print("ERROR:", e)
 
-
 # ================= WEBHOOK =================
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -193,11 +203,9 @@ def webhook():
     bot.process_new_updates([update])
     return "OK"
 
-
 @app.route("/")
 def home():
     return "Running"
-
 
 # ================= RUN =================
 if __name__ == "__main__":
