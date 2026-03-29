@@ -50,75 +50,16 @@ def mm_to_en(text):
 def clean_text(text):
     text = mm_to_en(text)
 
-    # 🔥 OCR FIX (VERY IMPORTANT)
-    text = text.replace("J", "2")   # Wave fix
+    # OCR fix
+    text = text.replace("J", "2")
     text = text.replace("O", "0")
     text = text.replace("o", "0")
 
     text = text.replace(",", "")
     return text
 
-def join_numbers(text):
-    matches = re.findall(r"\d{2,}\s+\d{2,}", text)
-    return [m.replace(" ", "") for m in matches]
-
-# ================= AMOUNT =================
-def get_amount(image):
-    width, height = image.size
-
-    crops = [
-        image.crop((0, 0, width, int(height * 0.4))),   # TOP
-        image.crop((0, int(height * 0.4), width, int(height * 0.8)))  # MID
-    ]
-
-    all_numbers = []
-
-    for crop in crops:
-        text = pytesseract.image_to_string(
-            crop,
-            lang='eng+my',
-            config='--psm 6'
-        )
-
-        print("OCR PART:\n", text)
-
-        clean = clean_text(text)
-
-        # decimal support
-        nums = re.findall(r"\d{3,}(?:\.\d{2})?", clean)
-
-        for n in nums:
-            n = n.replace(".00", "")
-            all_numbers.append(n)
-
-        # join split numbers
-        all_numbers.extend(join_numbers(clean))
-
-    print("ALL NUMBERS:", all_numbers)
-
-    valid = []
-
-    for n in all_numbers:
-        try:
-            val = int(n)
-
-            if val < 1000:
-                continue
-
-            if val > 10000000:
-                continue
-
-            valid.append(val)
-        except:
-            pass
-
-    if valid:
-        return str(max(valid))
-
-    return "unknown"
-
 # ================= BANK =================
-def get_bank(text):
+def detect_bank(text):
     t = text.lower()
 
     if "kbz" in t:
@@ -129,11 +70,55 @@ def get_bank(text):
 
     return "unknown"
 
+# ================= KBZ AMOUNT =================
+def extract_kbz_amount(text):
+    text = clean_text(text)
+
+    nums = re.findall(r"\d{4,}", text)
+
+    valid = []
+    for n in nums:
+        val = int(n)
+
+        if val < 1000:
+            continue
+
+        if val > 10000000:
+            continue
+
+        valid.append(val)
+
+    if valid:
+        return str(max(valid))
+
+    return "unknown"
+
+# ================= WAVE AMOUNT =================
+def extract_wave_amount(text):
+    text = clean_text(text)
+
+    lines = text.split("\n")
+
+    for line in lines:
+        if "ကျပ်" in line or "အောင်မြင်" in line:
+            nums = re.findall(r"\d{3,}", line)
+            if nums:
+                return nums[0]
+
+    # fallback
+    nums = re.findall(r"\d{4,}", text)
+    valid = [int(n) for n in nums if 1000 < int(n) < 10000000]
+
+    if valid:
+        return str(max(valid))
+
+    return "unknown"
+
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
 
-    if any(x in t for x in ["success", "completed", "thank", "အောင်မြင်"]):
+    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
         return "success"
 
     return "unknown"
@@ -178,18 +163,26 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("L")
 
-        # FULL TEXT
-        full_text = pytesseract.image_to_string(
+        text = pytesseract.image_to_string(
             image,
             lang='eng+my',
             config='--psm 6'
         )
 
-        print("FULL OCR:\n", full_text)
+        print("OCR TEXT:\n", text)
 
-        amount = get_amount(image)
-        bank = get_bank(full_text)
-        status = get_status(full_text)
+        bank = detect_bank(text)
+
+        if bank == "KBZ":
+            amount = extract_kbz_amount(text)
+
+        elif bank == "Wave":
+            amount = extract_wave_amount(text)
+
+        else:
+            amount = "unknown"
+
+        status = get_status(text)
 
         print("FINAL:", amount, bank, status)
 
