@@ -8,9 +8,13 @@ from PIL import Image
 import io
 import re
 
-# OCR path
+# ================= OCR CONFIG =================
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
+# 🔥 IMPORTANT (Myanmar OCR fix)
+os.environ["TESSDATA_PREFIX"] = "/usr/share/tesseract-ocr/4.00/tessdata"
+
+# ================= BOT =================
 TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
@@ -22,7 +26,7 @@ first_msg_saved = {}
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
-# 👉 SEND TO SHEET
+# ================= SHEET =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -35,12 +39,13 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         "time": str(datetime.now())
     }
     try:
-        requests.post(GOOGLE_SHEET_URL, json=data)
-    except:
-        pass
+        res = requests.post(GOOGLE_SHEET_URL, json=data)
+        print("SHEET:", res.status_code)
+    except Exception as e:
+        print("SHEET ERROR:", e)
 
 
-# 👉 Myanmar number → English
+# ================= UTIL =================
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
     en = "0123456789"
@@ -49,70 +54,69 @@ def mm_to_en(text):
     return text
 
 
-# 👉 SLIP CHECK (FIXED 🔥)
+# ================= SLIP CHECK =================
 def is_slip(text):
     t = text.lower()
 
     if "kbz" in t:
         return True
 
-    # 🔥 Wave (Myanmar only)
+    # 🔥 Myanmar Wave detect
     if "ကျပ်" in text:
         return True
 
     return False
 
 
-# 👉 AMOUNT EXTRACT (FIXED 🔥)
+# ================= AMOUNT =================
 def get_amount(text):
     text = mm_to_en(text)
     t = text.replace(",", "")
 
-    # 🔥 Myanmar (Wave)
+    # 🔥 Myanmar Wave
     match = re.findall(r"(\d{3,})\s*ကျပ်", t)
     if match:
         return match[0]
 
-    # 🔥 Decimal (some Wave cases)
+    # decimal fallback
     nums = re.findall(r"\d{3,}\.\d{2}", t)
     if nums:
         return max(nums, key=lambda x: float(x))
 
-    # KBZ / fallback
+    # general fallback
     nums = re.findall(r"\d{4,7}", t)
-    nums = [n for n in nums if 4 <= len(n) <= 7]
-
     if nums:
         return max(nums, key=lambda x: int(x))
 
     return "unknown"
 
 
-# 👉 BANK (FIXED 🔥)
+# ================= BANK =================
 def get_bank(text):
     t = text.lower()
 
     if "kbz" in t:
         return "KBZ"
 
-    # 🔥 Myanmar Wave detect
     if "ကျပ်" in text:
         return "Wave"
 
     return "unknown"
 
 
-# 👉 STATUS
+# ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
+    if any(x in t for x in ["success", "completed", "thank", "အောင်မြင်"]):
         return "success"
     return "unknown"
 
 
-# 🚀 START
+# ================= START =================
 @bot.message_handler(commands=['start'])
 def start(msg):
+    print("START WORKED")
+
     uid = msg.chat.id
     source = "unknown"
 
@@ -125,9 +129,11 @@ def start(msg):
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
 
-# 💬 FIRST MESSAGE
+# ================= TEXT =================
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
+    print("TEXT WORKED")
+
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
@@ -136,9 +142,11 @@ def first_msg(msg):
         first_msg_saved[uid] = True
 
 
-# 📸 PHOTO
+# ================= PHOTO =================
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
+    print("📸 PHOTO RECEIVED")
+
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
@@ -152,6 +160,9 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file))
 
+        # 🔥 DEBUG language check
+        print("LANGS:", pytesseract.get_languages(config=''))
+
         # 🔥 OCR (Myanmar + English)
         text = pytesseract.image_to_string(
             image,
@@ -159,11 +170,12 @@ def photo(msg):
             config='--psm 6'
         )
 
-        print("OCR:\n", text)
+        print("========== OCR ==========")
+        print(text)
+        print("=========================")
 
-        # check slip
         if not is_slip(text):
-            print("NOT SLIP")
+            print("❌ NOT SLIP")
             return
 
         amount = get_amount(text)
@@ -178,9 +190,10 @@ def photo(msg):
         print("ERROR:", e)
 
 
-# 🌐 WEBHOOK (မပြောင်း ❗)
+# ================= WEBHOOK =================
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
+    print("🔥 Webhook HIT")
     update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
     bot.process_new_updates([update])
     return "OK"
@@ -191,8 +204,9 @@ def home():
     return "Running"
 
 
-# 🚀 RUN
+# ================= RUN =================
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=f"https://railway-bot-production-e57e.up.railway.app/{TOKEN}")
+
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
