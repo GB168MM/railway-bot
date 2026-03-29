@@ -123,7 +123,7 @@ def extract_wave_amount(image):
         print("WAVE OCR:", text)
 
         text = text.replace(",", "")
-        text = text.replace("J", "2")
+        text = text.replace("၂", "2")
         text = text.replace("O", "0")
 
         nums = re.findall(r"\d{4,}", text)
