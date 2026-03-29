@@ -12,7 +12,7 @@ import numpy as np
 
 # ================= CONFIG =================
 TOKEN = os.environ.get("BOT_TOKEN")
-APP_URL = os.environ.get("APP_URL")  # Railway URL
+APP_URL = os.environ.get("APP_URL")
 
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
@@ -34,6 +34,15 @@ def mm_to_en(text):
     return text
 
 
+# 🔥 OCR error fix
+def clean_ocr_text(text):
+    text = text.replace("J", "0")
+    text = text.replace("O", "0")
+    text = text.replace("l", "1")
+    return text
+
+
+# 🔥 preprocess
 def preprocess(image):
     img = np.array(image)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -48,6 +57,8 @@ def preprocess(image):
     return thresh
 
 
+# ================= CORE =================
+
 def get_bank(text):
     t = text.lower()
     if "kbz" in t:
@@ -59,26 +70,40 @@ def get_bank(text):
 
 def get_amount(text, bank):
     text = mm_to_en(text)
+    text = clean_ocr_text(text)
+
     t = text.lower().replace(",", "")
 
-    # KBZ
-    if bank == "KBZ":
-        match = re.findall(r"-?\d{4,}\.\d{2}", t)
-        if match:
-            return match[0].replace("-", "")
-
-    # Wave
+    # ---------- WAVE ----------
     if bank == "Wave":
-        match = re.findall(r"\d{3,}\.\d{2}", t)
-        if match:
-            return match[0]
+        lines = text.split("\n")
 
-    # fallback
-    match = re.findall(r"(?:ks|mmk|kyat)?\s*(\d{3,7})\s*(?:ks|mmk|kyat)?", t)
-    match = [m for m in match if len(m) <= 7]
+        # priority: Ks line
+        for line in lines:
+            l = clean_ocr_text(line)
 
-    if match:
-        return max(match, key=lambda x: int(x))
+            if "ks" in l.lower() or "ကျပ်" in l:
+                nums = re.findall(r"\d{3,}\.\d{2}", l.replace(",", ""))
+                if nums:
+                    return nums[0]
+
+        # fallback → biggest decimal
+        nums = re.findall(r"\d{3,}\.\d{2}", t)
+        if nums:
+            return max(nums, key=lambda x: float(x))
+
+    # ---------- KBZ ----------
+    if bank == "KBZ":
+        nums = re.findall(r"-?\d{4,}\.\d{2}", t)
+        if nums:
+            return nums[0].replace("-", "")
+
+    # ---------- COMMON ----------
+    nums = re.findall(r"\d{3,7}", t)
+    nums = [n for n in nums if len(n) <= 7]
+
+    if nums:
+        return max(nums, key=lambda x: int(x))
 
     return "unknown"
 
@@ -151,11 +176,11 @@ def photo(msg):
         # preprocess
         processed = preprocess(image)
 
-        # OCR
+        # OCR 🔥 tuned
         text = pytesseract.image_to_string(
             processed,
             lang='eng+my',
-            config='--psm 6 --oem 3'
+            config='--psm 6 --oem 3 -c tessedit_char_whitelist=0123456789.Ksks'
         )
 
         print("OCR:\n", text)
