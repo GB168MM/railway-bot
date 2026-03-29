@@ -47,14 +47,6 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-def clean_text(text):
-    text = mm_to_en(text)
-    text = text.replace("၂", "2")
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
-    text = text.replace(",", "")
-    return text
-
 # ================= BANK =================
 def detect_bank(image, text):
     t = text.lower()
@@ -64,24 +56,24 @@ def detect_bank(image, text):
 
     # Wave (yellow detect)
     small = image.resize((50,50))
-    pixels = list(small.getdata())
-
     yellow = 0
-    for r,g,b in pixels:
+
+    for r,g,b in small.getdata():
         if r > 200 and g > 200 and b < 150:
             yellow += 1
 
     if yellow > 500:
         return "Wave"
 
-    if "ကျပ်" in t or "အောင်မြင်" in t:
+    if "ကျပ်" in text or "အောင်မြင်" in text:
         return "Wave"
 
     return "unknown"
 
 # ================= KBZ =================
 def extract_kbz_amount(text):
-    text = clean_text(text)
+    text = mm_to_en(text)
+    text = text.replace(",", "")
 
     nums = re.findall(r"\d{4,}", text)
 
@@ -89,12 +81,8 @@ def extract_kbz_amount(text):
     for n in nums:
         val = int(n)
 
-        if val < 1000:
-            continue
-        if val > 10000000:
-            continue
-
-        valid.append(val)
+        if 1000 < val < 10000000:
+            valid.append(val)
 
     if valid:
         return str(max(valid))
@@ -105,50 +93,54 @@ def extract_kbz_amount(text):
 def extract_wave_amount(image):
     width, height = image.size
 
-    # 👉 TOP + MID scan
-    areas = [
-        image.crop((0, 0, width, int(height * 0.35))),
-        image.crop((0, int(height * 0.35), width, int(height * 0.75)))
-    ]
+    # 👉 FIXED AREA (amount zone)
+    crop = image.crop((
+        int(width * 0.2),
+        int(height * 0.15),
+        int(width * 0.8),
+        int(height * 0.35)
+    ))
 
-    results = []
+    text = pytesseract.image_to_string(
+        crop,
+        lang='eng+my',
+        config='--psm 7'
+    )
 
-    for area in areas:
-        text = pytesseract.image_to_string(
-            area,
-            lang='eng',
-            config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
-        )
+    print("WAVE OCR:", text)
 
-        print("WAVE OCR:", text)
+    # 👉 Myanmar numbers first
+    mm_nums = re.findall(r"[၀-၉,]+", text)
 
-        text = text.replace(",", "")
-        text = text.replace("၂", "2")
-        text = text.replace("၀", "0")
+    if mm_nums:
+        nums = []
+        for m in mm_nums:
+            val = int(mm_to_en(m).replace(",", ""))
 
-        nums = re.findall(r"\d{4,}", text)
+            if 1000 < val < 10000000:
+                nums.append(val)
 
-        for n in nums:
-            val = int(n)
+        if nums:
+            return str(max(nums))
 
-            if val < 1000:
-                continue
-            if val > 10000000:
-                continue
+    # 👉 fallback English
+    text = text.replace(",", "")
+    text = text.replace("O", "0")
+    text = text.replace("J", "2")
 
-            results.append(val)
+    nums = re.findall(r"\d{4,}", text)
 
-    print("WAVE RESULTS:", results)
+    valid = [int(n) for n in nums if 1000 < int(n) < 10000000]
 
-    if results:
-        return str(max(results))
+    if valid:
+        return str(max(valid))
 
     return "unknown"
 
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
+    if "success" in t or "completed" in t or "အောင်မြင်" in t:
         return "success"
     return "unknown"
 
@@ -192,7 +184,6 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # FULL OCR
         text = pytesseract.image_to_string(image, lang='eng+my')
 
         print("OCR TEXT:\n", text)
