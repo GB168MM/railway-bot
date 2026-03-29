@@ -8,6 +8,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import io
 import re
 
+# 👉 OCR path
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -18,10 +19,11 @@ app = Flask(__name__)
 user_source = {}
 user_first_message_saved = {}
 
+# 👉 Google Sheet URL
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 
-# 🚀 SEND TO SHEET (FINAL FORMAT)
+# 🚀 SEND TO SHEET
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -40,11 +42,27 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         print("Sheet Error:", e)
 
 
-# 🧠 SLIP CHECK (BALANCE)
+# 🔥 Myanmar Number → English
+def mm_to_en_digits(text):
+    mm_digits = "၀၁၂၃၄၅၆၇၈၉"
+    en_digits = "0123456789"
+
+    for m, e in zip(mm_digits, en_digits):
+        text = text.replace(m, e)
+
+    return text
+
+
+# 🧠 SLIP CHECK
 def is_valid_slip(text):
     t = text.lower()
 
-    keywords = ["kbz", "pay", "bank", "ks", "mmk", "transfer", "success"]
+    keywords = [
+        "kbz", "pay", "bank",
+        "wave", "money",
+        "transfer", "success",
+        "mmk", "ks", "ကျပ်"
+    ]
 
     score = sum([1 for k in keywords if k in t])
 
@@ -53,27 +71,32 @@ def is_valid_slip(text):
     return score >= 2
 
 
-# 🧠 AMOUNT EXTRACT (IMPROVED 🔥)
+# 🧠 AMOUNT EXTRACT (FINAL 🔥)
 def extract_amount(text):
-    t = text.lower().replace("o", "0")
+    # 👉 convert Myanmar numbers
+    text = mm_to_en_digits(text)
 
-    # 👉 STEP 1: Ks pattern (best)
-    match = re.findall(r"(\d{3,})\s*(ks|mmk)", t.replace(",", ""))
+    t = text.lower().replace("o", "0")
+    t_clean = t.replace(",", "").replace(" ", "")
+
+    # ✅ STEP 1: Ks / MMK / ကျပ်
+    match = re.findall(r"(\d{3,})\s*(ks|mmk|ကျပ်)", t_clean)
     if match:
         return match[0][0]
 
-    # 👉 STEP 2: amount line
+    # ✅ STEP 2: line search
     for line in text.split("\n"):
-        l = line.lower().replace("o", "0")
-        if "amount" in l or "ks" in l:
+        l = mm_to_en_digits(line.lower())
+
+        if "ကျပ်" in l or "mmk" in l or "ks" in l:
             nums = re.findall(r"\d{3,}", l.replace(",", ""))
             if nums:
                 return nums[0]
 
-    # 👉 STEP 3: fallback (safe length only)
-    nums = re.findall(r"\d{4,}", t.replace(",", ""))
+    # ✅ STEP 3: fallback
+    nums = re.findall(r"\d{4,}", t_clean)
 
-    # ❗ avoid ref no (too long)
+    # ❗ avoid ref no
     nums = [n for n in nums if 4 <= len(n) <= 7]
 
     if nums:
@@ -82,12 +105,13 @@ def extract_amount(text):
     return "unknown"
 
 
+# 🧠 BANK
 def extract_bank(text):
     t = text.lower()
 
     if "kbz" in t:
         return "KBZ"
-    elif "wave" in t:
+    elif "wave" in t or "money" in t or "ကျပ်" in t:
         return "Wave"
     elif "aya" in t:
         return "AYA"
@@ -97,6 +121,7 @@ def extract_bank(text):
         return "unknown"
 
 
+# 🧠 STATUS
 def extract_status(text):
     t = text.lower()
 
@@ -119,6 +144,8 @@ def start(message):
     user_source[user_id] = source
     user_first_message_saved[user_id] = False
 
+    print(f"START | {user_id} | {source}")
+
     send_to_sheet(user_id, source, "start", "start", "", "", "")
 
 
@@ -130,11 +157,12 @@ def handle_text(message):
     source = user_source.get(user_id, "unknown")
 
     if not user_first_message_saved.get(user_id, False):
+        print(f"FIRST MSG | {user_id} | {text}")
         send_to_sheet(user_id, source, "first_message", text, "", "", "")
         user_first_message_saved[user_id] = True
 
 
-# 📸 PHOTO HANDLER (FINAL)
+# 📸 PHOTO HANDLER
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.chat.id
@@ -167,7 +195,7 @@ def handle_photo(message):
 
         print("OCR TEXT:\n", text)
 
-        # 👉 check slip
+        # 👉 slip check
         if not is_valid_slip(text):
             print("❌ NOT SLIP")
             return
@@ -197,9 +225,10 @@ def webhook():
 
 @app.route("/")
 def home():
-    return "Bot Running"
+    return "Bot Running 🚀"
 
 
+# 🚀 RUN
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(
