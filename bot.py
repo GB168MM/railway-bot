@@ -37,10 +37,9 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         "time": str(datetime.now())
     }
     try:
-        res = requests.post(GOOGLE_SHEET_URL, json=data)
-        print("SHEET:", res.status_code)
-    except Exception as e:
-        print("SHEET ERROR:", e)
+        requests.post(GOOGLE_SHEET_URL, json=data)
+    except:
+        pass
 
 
 # ================= UTIL =================
@@ -59,19 +58,17 @@ def is_slip(text):
     if "kbz" in t:
         return True
 
-    # Wave Myanmar / OCR tolerant
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
         return True
 
-    # fallback: has reasonable number
-    nums = re.findall(r"\d{4,}", t)
-    if nums:
+    # fallback
+    if re.findall(r"\d{4,}", t):
         return True
 
     return False
 
 
-# ================= AMOUNT =================
+# ================= AMOUNT (FINAL FIX 🔥) =================
 def get_amount(text):
     text = mm_to_en(text)
     t = text.replace(",", "")
@@ -82,9 +79,15 @@ def get_amount(text):
     for n in nums:
         val = int(n)
 
-        # 🔥 filter only realistic money values
-        if 1000 <= val <= 10000000:
-            valid.append(val)
+        # ❌ OCR error small numbers
+        if val < 5000:
+            continue
+
+        # ❌ txn id big numbers
+        if val > 10000000:
+            continue
+
+        valid.append(val)
 
     if valid:
         return str(max(valid))
@@ -102,9 +105,7 @@ def get_bank(text):
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
         return "Wave"
 
-    # fallback
-    nums = re.findall(r"\d{4,}", t)
-    if nums:
+    if re.findall(r"\d{4,}", t):
         return "Wave"
 
     return "unknown"
@@ -121,8 +122,6 @@ def get_status(text):
 # ================= START =================
 @bot.message_handler(commands=['start'])
 def start(msg):
-    print("START WORKED")
-
     uid = msg.chat.id
     source = "unknown"
 
@@ -138,8 +137,6 @@ def start(msg):
 # ================= TEXT =================
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
-    print("TEXT WORKED")
-
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
@@ -151,8 +148,6 @@ def first_msg(msg):
 # ================= PHOTO =================
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
-    print("📸 PHOTO RECEIVED")
-
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
@@ -173,12 +168,10 @@ def photo(msg):
             config='--psm 6'
         )
 
-        print("========== OCR ==========")
-        print(text)
-        print("=========================")
+        print("OCR:\n", text)
 
         if not is_slip(text):
-            print("❌ NOT SLIP")
+            print("NOT SLIP")
             return
 
         amount = get_amount(text)
@@ -196,7 +189,6 @@ def photo(msg):
 # ================= WEBHOOK =================
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    print("🔥 Webhook HIT")
     update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
     bot.process_new_updates([update])
     return "OK"
@@ -211,5 +203,4 @@ def home():
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=f"https://railway-bot-production-e57e.up.railway.app/{TOKEN}")
-
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
