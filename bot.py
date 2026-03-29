@@ -52,18 +52,18 @@ def mm_to_en(text):
     return text
 
 
-# ================= SLIP CHECK (STRONG) =================
+# ================= SLIP CHECK =================
 def is_slip(text):
     t = text.lower()
 
     if "kbz" in t:
         return True
 
-    # 🔥 Wave tolerant
+    # Wave Myanmar / OCR tolerant
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
         return True
 
-    # 🔥 fallback: any big number
+    # fallback: has reasonable number
     nums = re.findall(r"\d{4,}", t)
     if nums:
         return True
@@ -76,11 +76,18 @@ def get_amount(text):
     text = mm_to_en(text)
     t = text.replace(",", "")
 
-    # 🔥 extract all numbers
-    nums = re.findall(r"\d{3,}", t)
+    nums = re.findall(r"\d+", t)
 
-    if nums:
-        return max(nums, key=lambda x: int(x))
+    valid = []
+    for n in nums:
+        val = int(n)
+
+        # 🔥 filter only realistic money values
+        if 1000 <= val <= 10000000:
+            valid.append(val)
+
+    if valid:
+        return str(max(valid))
 
     return "unknown"
 
@@ -92,11 +99,10 @@ def get_bank(text):
     if "kbz" in t:
         return "KBZ"
 
-    # 🔥 Wave tolerant
     if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
         return "Wave"
 
-    # 🔥 fallback
+    # fallback
     nums = re.findall(r"\d{4,}", t)
     if nums:
         return "Wave"
@@ -160,10 +166,7 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file))
 
-        # 🔥 DEBUG LANG
-        print("LANGS:", pytesseract.get_languages(config=''))
-
-        # 🔥 OCR
+        # OCR
         text = pytesseract.image_to_string(
             image,
             lang='eng+my',
