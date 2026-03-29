@@ -10,9 +10,12 @@ import re
 import cv2
 import numpy as np
 
+# ================= CONFIG =================
+TOKEN = os.environ.get("BOT_TOKEN")
+APP_URL = os.environ.get("APP_URL")  # Railway URL
+
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
-TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -21,7 +24,8 @@ GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7x
 user_source = {}
 first_msg_saved = {}
 
-# 👉 Myanmar number → English
+# ================= UTIL =================
+
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
     en = "0123456789"
@@ -30,7 +34,6 @@ def mm_to_en(text):
     return text
 
 
-# 👉 IMAGE PREPROCESS (🔥 IMPORTANT)
 def preprocess(image):
     img = np.array(image)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -45,7 +48,6 @@ def preprocess(image):
     return thresh
 
 
-# 👉 BANK DETECT
 def get_bank(text):
     t = text.lower()
     if "kbz" in t:
@@ -55,29 +57,24 @@ def get_bank(text):
     return "unknown"
 
 
-# 👉 AMOUNT EXTRACT (🔥 CORE FIX)
 def get_amount(text, bank):
     text = mm_to_en(text)
     t = text.lower().replace(",", "")
 
-    # ---------- KBZ ----------
+    # KBZ
     if bank == "KBZ":
-        # -200000.00 Ks
         match = re.findall(r"-?\d{4,}\.\d{2}", t)
         if match:
             return match[0].replace("-", "")
 
-    # ---------- WAVE ----------
+    # Wave
     if bank == "Wave":
-        # 10000.00
         match = re.findall(r"\d{3,}\.\d{2}", t)
         if match:
             return match[0]
 
-    # ---------- COMMON ----------
+    # fallback
     match = re.findall(r"(?:ks|mmk|kyat)?\s*(\d{3,7})\s*(?:ks|mmk|kyat)?", t)
-
-    # filter phone numbers (9-11 digits)
     match = [m for m in match if len(m) <= 7]
 
     if match:
@@ -86,7 +83,6 @@ def get_amount(text, bank):
     return "unknown"
 
 
-# 👉 STATUS
 def get_status(text):
     t = text.lower()
     if "success" in t or "completed" in t or "အောင်မြင်" in t:
@@ -94,7 +90,6 @@ def get_status(text):
     return "unknown"
 
 
-# 👉 SEND TO SHEET
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -112,7 +107,8 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         pass
 
 
-# 🚀 START
+# ================= BOT =================
+
 @bot.message_handler(commands=['start'])
 def start(msg):
     uid = msg.chat.id
@@ -127,7 +123,6 @@ def start(msg):
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
 
-# 💬 FIRST MESSAGE
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
     uid = msg.chat.id
@@ -138,7 +133,6 @@ def first_msg(msg):
         first_msg_saved[uid] = True
 
 
-# 📸 PHOTO OCR
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
     uid = msg.chat.id
@@ -154,21 +148,20 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file))
 
-        # 🔥 preprocess
+        # preprocess
         processed = preprocess(image)
 
         # OCR
         text = pytesseract.image_to_string(
             processed,
             lang='eng+my',
-            config='--psm 6'
+            config='--psm 6 --oem 3'
         )
 
         print("OCR:\n", text)
 
         bank = get_bank(text)
 
-        # ❌ not slip
         if bank == "unknown":
             return
 
@@ -183,7 +176,8 @@ def photo(msg):
         print("ERROR:", e)
 
 
-# 🌐 WEBHOOK
+# ================= WEBHOOK =================
+
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
@@ -196,8 +190,9 @@ def home():
     return "Running"
 
 
-# 🚀 RUN
+# ================= RUN =================
+
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(url=f"https://your-app-url/{TOKEN}")
+    bot.set_webhook(url=f"{APP_URL}/{TOKEN}")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
