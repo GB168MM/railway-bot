@@ -34,8 +34,13 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         "status": status,
         "time": str(datetime.now())
     }
+
+    print("SENDING TO SHEET:", data)  # DEBUG
+
     try:
-        requests.post(GOOGLE_SHEET_URL, json=data)
+        res = requests.post(GOOGLE_SHEET_URL, json=data)
+        print("SHEET STATUS:", res.status_code)
+        print("SHEET RESPONSE:", res.text)
     except Exception as e:
         print("Sheet Error:", e)
 
@@ -83,25 +88,25 @@ def extract_kbz_amount(text):
 
     return "unknown"
 
-# ================= WAVE (STRONG FIX) =================
+# ================= WAVE =================
 def extract_wave_amount(text):
     text = clean_text(text)
 
     print("CLEAN TEXT:", text)
 
-    # ✅ PRIORITY 1 → number + ကျပ်
+    # Priority 1: number + ကျပ်
     matches = re.findall(r"(\d{4,})\s*ကျပ်", text)
     if matches:
         print("KYAT MATCH:", matches)
         return matches[-1]
 
-    # ✅ PRIORITY 2 → exact 5 digit (15000 type)
+    # Priority 2: 5 digit (15000)
     matches = re.findall(r"\b\d{5}\b", text)
     if matches:
         print("5 DIGIT MATCH:", matches)
         return matches[0]
 
-    # ✅ PRIORITY 3 → all numbers filter
+    # Fallback
     nums = re.findall(r"\d{4,}", text)
     nums = [int(n) for n in nums if 1000 <= int(n) <= 1000000]
 
@@ -130,6 +135,8 @@ def start(msg):
     user_source[uid] = source
     first_msg_saved[uid] = False
 
+    print("START RECEIVED:", uid, source)
+
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
 # ================= TEXT =================
@@ -137,6 +144,8 @@ def start(msg):
 def first_msg(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
+
+    print("TEXT RECEIVED:", msg.text)
 
     if not first_msg_saved.get(uid, False):
         send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
@@ -147,6 +156,8 @@ def first_msg(msg):
 def photo(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
+
+    print("PHOTO RECEIVED")
 
     try:
         file_id = msg.photo[-1].file_id
