@@ -8,13 +8,19 @@ from PIL import Image
 import io
 import re
 
+print("BOT STARTING...")
+
+# ================= CONFIG =================
+TOKEN = os.environ.get("BOT_TOKEN")
+BASE_URL = "https://beautiful-delight-production-79cf.up.railway.app"
+
+print("TOKEN:", TOKEN)
+
 # ================= OCR =================
 reader = easyocr.Reader(['en', 'my'], gpu=False)
 
 # ================= BOT =================
-TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
-
 app = Flask(__name__)
 
 user_source = {}
@@ -78,12 +84,11 @@ def extract_amount(text):
     text = clean_text(text)
     lines = text.split("\n")
 
-    # 🔥 PRIORITY 1 → amount keyword line
     keywords = ["amount", "send", "sent", "transfer", "paid", "ပို့", "လွှဲ"]
 
+    # PRIORITY 1
     for line in lines:
         l = line.lower()
-
         if any(k in l for k in keywords):
             nums = re.findall(r"\d{3,}", line)
             for n in nums:
@@ -92,7 +97,7 @@ def extract_amount(text):
                     print("AMOUNT (keyword):", val)
                     return str(val)
 
-    # 🔥 PRIORITY 2 → kyat / ks / ကျပ်
+    # PRIORITY 2
     patterns = [
         r'(\d{3,})\s*kyat',
         r'(\d{3,})\s*ks',
@@ -107,7 +112,7 @@ def extract_amount(text):
                 print("AMOUNT (currency):", val)
                 return str(val)
 
-    # 🔥 PRIORITY 3 → smart filter
+    # PRIORITY 3
     nums = re.findall(r"\d{4,}", text)
 
     valid = []
@@ -116,10 +121,8 @@ def extract_amount(text):
 
         if str(val).startswith("09"):
             continue
-
         if val > 5000000:
             continue
-
         if val < 1000:
             continue
 
@@ -128,7 +131,6 @@ def extract_amount(text):
     print("ALL NUMBERS:", valid)
 
     if valid:
-        # 🔥 smallest realistic transfer
         val = sorted(valid)[0]
         print("AMOUNT (fallback):", val)
         return str(val)
@@ -182,7 +184,6 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # 🔥 OCR
         text = run_ocr(image)
 
         bank = detect_bank(text)
@@ -210,7 +211,6 @@ def home():
 # ================= RUN =================
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(
-        url=f"https://railway-bot-production-e57e.up.railway.app/{TOKEN}"
-    )
+    bot.set_webhook(url=f"{BASE_URL}/{TOKEN}")
+    print("Webhook set to:", f"{BASE_URL}/{TOKEN}")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
