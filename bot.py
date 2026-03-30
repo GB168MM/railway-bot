@@ -21,7 +21,7 @@ bot = telebot.TeleBot(TOKEN)
 
 app = Flask(__name__)
 
-GOOGLE_SHEET_URL = "YOUR_GOOGLE_SCRIPT_URL"
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 user_source = {}
 first_msg_saved = {}
