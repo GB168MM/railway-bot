@@ -4,7 +4,7 @@ import os
 import requests
 from datetime import datetime
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageEnhance
 import io
 import re
 
@@ -47,13 +47,6 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-def clean_text(text):
-    text = mm_to_en(text)
-    text = text.replace(",", "")
-    text = text.replace("O", "0").replace("o", "0")
-    text = text.replace("J", "2")
-    return text
-
 # ================= BANK =================
 def detect_bank(image, text):
     t = text.lower()
@@ -78,59 +71,48 @@ def detect_bank(image, text):
 
     return "unknown"
 
-# ================= 🔥 SMART AMOUNT EXTRACT =================
+# ================= 🔥 IMAGE OCR =================
+def ocr_number_only(image):
+    # grayscale
+    gray = image.convert("L")
+
+    # contrast
+    enhancer = ImageEnhance.Contrast(gray)
+    gray = enhancer.enhance(2.5)
+
+    # OCR only digits
+    text = pytesseract.image_to_string(
+        gray,
+        lang='eng',
+        config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
+    )
+
+    print("NUMBER OCR:", text)
+    return text
+
+# ================= 🔥 AMOUNT =================
 def extract_amount(text):
-    text = clean_text(text)
-    lower = text.lower()
+    text = text.replace(",", "")
 
-    print("CLEAN TEXT:", lower)
-
-    # 🔥 1. Find amount near keyword
-    patterns = [
-        r'(\d{3,})\s*kyat',
-        r'(\d{3,})\s*ks',
-        r'(\d{3,})\s*ကျပ်'
-    ]
-
-    for p in patterns:
-        match = re.search(p, lower)
-        if match:
-            val = int(match.group(1))
-            if 1000 <= val <= 500000:
-                print("FOUND KEYWORD:", val)
-                return str(val)
-
-    # 🔥 2. Find decimal format (15000.00)
-    match = re.search(r'(\d{4,})\.00', lower)
-    if match:
-        val = int(match.group(1))
-        if 1000 <= val <= 500000:
-            print("FOUND DECIMAL:", val)
-            return str(val)
-
-    # 🔥 3. Fallback (filter carefully)
-    nums = re.findall(r"\d{4,}", lower)
+    nums = re.findall(r"\d{4,}", text)
 
     valid = []
+
     for n in nums:
         val = int(n)
 
-        # ❌ skip phone numbers
-        if str(val).startswith("09"):
+        if val < 1000:
+            continue
+        if val > 300000:
             continue
 
-        # ❌ skip long txn ids
-        if len(str(val)) > 7:
-            continue
+        valid.append(val)
 
-        if 1000 <= val <= 500000:
-            valid.append(val)
-
-    print("FALLBACK:", valid)
+    print("FILTERED:", valid)
 
     if valid:
         valid.sort()
-        return str(valid[0])  # safest
+        return str(valid[0])  # smallest = most accurate
 
     return "unknown"
 
@@ -181,18 +163,17 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # 🔥 OCR (important config)
-        text = pytesseract.image_to_string(
-            image,
-            lang='eng+my',
-            config='--psm 6'
-        )
+        # 🔥 OCR number only (main fix)
+        number_text = ocr_number_only(image)
 
-        print("OCR TEXT:\n", text)
+        # 🔥 fallback OCR (for bank/status)
+        full_text = pytesseract.image_to_string(image, lang='eng+my')
 
-        bank = detect_bank(image, text)
-        amount = extract_amount(text)
-        status = get_status(text)
+        print("FULL OCR:", full_text)
+
+        bank = detect_bank(image, full_text)
+        amount = extract_amount(number_text)
+        status = get_status(full_text)
 
         print("FINAL:", amount, bank, status)
 
