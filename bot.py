@@ -1,195 +1,107 @@
-import telebot
-from flask import Flask, request
 import os
 import requests
-from datetime import datetime
-import pytesseract
+from flask import Flask, request
 from PIL import Image
-import io
+import easyocr
 import re
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-# ================= CONFIG =================
-TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = "https://beautiful-delight-production-79cf.up.railway.app"
+# ================== CONFIG ==================
+TOKEN = os.getenv("BOT_TOKEN")
+SHEET_NAME = "Sheet1"
 
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+# ================== GOOGLE SHEETS ==================
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 
-bot = telebot.TeleBot(TOKEN)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
+sheet = client.open(SHEET_NAME).sheet1
+
+# ================== OCR ==================
+reader = easyocr.Reader(['en', 'my'])
+
+# ================== FLASK ==================
 app = Flask(__name__)
 
-user_source = {}
-first_msg_saved = {}
+# ================== FUNCTIONS ==================
 
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
+def extract_amount(text):
+    # Myanmar numbers → English
+    mm_to_en = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
+    text = text.translate(mm_to_en)
 
-# ================= SEND TO SHEETS =================
-def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
-    data = {
-        "user_id": user_id,
-        "source": source,
-        "type": msg_type,
-        "message": message,
-        "amount": amount,
-        "bank": bank,
-        "status": status,
-        "time": str(datetime.now())
-    }
-
-    print("SENDING:", data)
-
-    try:
-        res = requests.post(GOOGLE_SHEET_URL, json=data)
-        print("SHEET STATUS:", res.status_code)
-        print("SHEET RESPONSE:", res.text)
-    except Exception as e:
-        print("Sheet Error:", e)
-
-# ================= UTIL =================
-def mm_to_en(text):
-    mm = "၀၁၂၃၄၅၆၇၈၉"
-    en = "0123456789"
-    for m, e in zip(mm, en):
-        text = text.replace(m, e)
-    return text
-
-def clean_text(text):
-    text = mm_to_en(text)
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
+    # remove commas
     text = text.replace(",", "")
+
+    numbers = re.findall(r'\d{4,7}', text)
+
+    if not numbers:
+        return "unknown"
+
+    # take smallest (prevent 29000 error)
+    return min(numbers, key=int)
+
+def get_file_path(file_id):
+    url = f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}"
+    res = requests.get(url).json()
+    return res["result"]["file_path"]
+
+def download_image(file_path):
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+    img = requests.get(url).content
+    with open("image.jpg", "wb") as f:
+        f.write(img)
+    return "image.jpg"
+
+def process_image(path):
+    result = reader.readtext(path, detail=0)
+    text = " ".join(result)
     return text
 
-# ================= BANK DETECT =================
-def detect_bank(text):
-    t = text.lower()
-    if "kbz" in t:
-        return "KBZ"
-    if "wave" in t or "ကျပ်" in text:
-        return "Wave"
-    return "unknown"
+def save_to_sheets(user, amount):
+    sheet.append_row([user, amount])
 
-# ================= KBZ =================
-def extract_kbz_amount(text):
-    text = clean_text(text)
-    nums = re.findall(r"\d{4,}", text)
-    nums = [int(n) for n in nums if 1000 <= int(n) <= 10000000]
-    if nums:
-        return str(max(nums))
-    return "unknown"
-
-# ================= WAVE =================
-def extract_wave_amount(text):
-    text = clean_text(text)
-
-    print("CLEAN TEXT:", text)
-
-    # Priority 1
-    matches = re.findall(r"(\d{4,})\s*ကျပ်", text)
-    if matches:
-        return matches[-1]
-
-    # Priority 2
-    matches = re.findall(r"\b\d{5}\b", text)
-    if matches:
-        return matches[0]
-
-    # Fallback
-    nums = re.findall(r"\d{4,}", text)
-    nums = [int(n) for n in nums if 1000 <= int(n) <= 1000000]
-
-    if nums:
-        return str(max(nums))
-
-    return "unknown"
-
-# ================= STATUS =================
-def get_status(text):
-    t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
-        return "success"
-    return "unknown"
-
-# ================= START =================
-@bot.message_handler(commands=['start'])
-def start(msg):
-    uid = msg.chat.id
-    source = "unknown"
-
-    if len(msg.text.split()) > 1:
-        source = msg.text.split()[1]
-
-    user_source[uid] = source
-    first_msg_saved[uid] = False
-
-    print("START:", uid)
-
-    send_to_sheet(uid, source, "start", "start", "", "", "")
-
-# ================= FIRST MESSAGE =================
-@bot.message_handler(func=lambda m: True, content_types=['text'])
-def first_msg(msg):
-    uid = msg.chat.id
-    source = user_source.get(uid, "unknown")
-
-    print("TEXT:", msg.text)
-
-    if not first_msg_saved.get(uid, False):
-        send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
-        first_msg_saved[uid] = True
-
-# ================= PHOTO =================
-@bot.message_handler(content_types=['photo'])
-def photo(msg):
-    uid = msg.chat.id
-    source = user_source.get(uid, "unknown")
-
-    print("PHOTO RECEIVED")
+# ================== WEBHOOK ==================
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    data = request.json
 
     try:
-        file_id = msg.photo[-1].file_id
-        file_info = bot.get_file(file_id)
+        if "message" in data:
+            msg = data["message"]
 
-        file_path = file_info.file_path
-        image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+            user = msg["from"]["first_name"]
 
-        file = bot.download_file(file_path)
-        image = Image.open(io.BytesIO(file)).convert("RGB")
+            if "photo" in msg:
+                file_id = msg["photo"][-1]["file_id"]
 
-        # OCR
-        text = pytesseract.image_to_string(image, lang='eng+my')
-        print("OCR:", text)
+                file_path = get_file_path(file_id)
+                img_path = download_image(file_path)
 
-        bank = detect_bank(text)
+                text = process_image(img_path)
+                amount = extract_amount(text)
 
-        if bank == "KBZ":
-            amount = extract_kbz_amount(text)
-        elif bank == "Wave":
-            amount = extract_wave_amount(text)
-        else:
-            amount = "unknown"
+                save_to_sheets(user, amount)
 
-        status = get_status(text)
+                print("USER:", user)
+                print("TEXT:", text)
+                print("AMOUNT:", amount)
 
-        print("FINAL:", amount, bank, status)
-
-        send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
+        return "OK", 200
 
     except Exception as e:
         print("ERROR:", e)
+        return "ERROR", 500
 
-# ================= WEBHOOK =================
-@app.route("/", methods=["POST"])
-def webhook():
-    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
-    bot.process_new_updates([update])
-    return "OK"
-
+# ================== ROOT ==================
 @app.route("/")
 def home():
-    return "Bot Running"
+    return "BOT IS RUNNING"
 
-# ================= RUN =================
+# ================== RUN ==================
 if __name__ == "__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)  # ROOT ONLY
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(host="0.0.0.0", port=8080)
