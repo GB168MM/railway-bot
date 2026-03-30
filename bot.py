@@ -3,13 +3,13 @@ from flask import Flask, request
 import os
 import requests
 from datetime import datetime
-import pytesseract
-from PIL import Image, ImageEnhance
+import easyocr
+from PIL import Image
 import io
 import re
 
 # ================= OCR =================
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+reader = easyocr.Reader(['en', 'my'], gpu=False)
 
 # ================= BOT =================
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -39,6 +39,13 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     except Exception as e:
         print("Sheet Error:", e)
 
+# ================= OCR =================
+def run_ocr(image):
+    result = reader.readtext(image)
+    text = " ".join([r[1] for r in result])
+    print("OCR TEXT:", text)
+    return text
+
 # ================= UTIL =================
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
@@ -47,72 +54,68 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-# ================= BANK =================
-def detect_bank(image, text):
-    t = text.lower()
-
-    if "kbz" in t:
-        return "KBZ"
-
-    # Wave detect (yellow)
-    small = image.resize((50, 50))
-    pixels = list(small.getdata())
-
-    yellow = 0
-    for r, g, b in pixels:
-        if r > 200 and g > 200 and b < 150:
-            yellow += 1
-
-    if yellow > 500:
-        return "Wave"
-
-    if "wave" in t or "ကျပ်" in t:
-        return "Wave"
-
-    return "unknown"
-
-# ================= 🔥 IMAGE OCR =================
-def ocr_number_only(image):
-    # grayscale
-    gray = image.convert("L")
-
-    # contrast
-    enhancer = ImageEnhance.Contrast(gray)
-    gray = enhancer.enhance(2.5)
-
-    # OCR only digits
-    text = pytesseract.image_to_string(
-        gray,
-        lang='eng',
-        config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
-    )
-
-    print("NUMBER OCR:", text)
+def clean_text(text):
+    text = mm_to_en(text)
+    text = text.replace(",", "")
+    text = text.replace("O", "0")
+    text = text.replace("o", "0")
+    text = text.replace("J", "2")
     return text
 
-# ================= 🔥 AMOUNT =================
-def extract_amount(text):
-    text = text.replace(",", "")
+# ================= BANK =================
+def detect_bank(text):
+    t = text.lower()
+    if "kbz" in t:
+        return "KBZ"
+    if "wave" in t:
+        return "Wave"
+    if "kpay" in t or "k pay" in t:
+        return "KPay"
+    return "unknown"
 
+# ================= AMOUNT =================
+def extract_amount(text):
+    text = clean_text(text)
+
+    # keyword priority
+    patterns = [
+        r'(\d{3,})\s*kyat',
+        r'(\d{3,})\s*ks',
+        r'(\d{3,})\s*ကျပ်'
+    ]
+
+    for p in patterns:
+        match = re.search(p, text.lower())
+        if match:
+            val = int(match.group(1))
+            if 1000 <= val <= 5000000:
+                return str(val)
+
+    # fallback
     nums = re.findall(r"\d{4,}", text)
 
     valid = []
-
     for n in nums:
         val = int(n)
 
-        if val < 1000:
+        # ❌ phone number remove
+        if str(val).startswith("09"):
             continue
-        if val > 300000:
+
+        # ❌ too big remove
+        if val > 5000000:
+            continue
+
+        if val < 1000:
             continue
 
         valid.append(val)
 
-    print("FILTERED:", valid)
+    print("ALL NUMBERS:", valid)
 
     if valid:
-        valid.sort()
-        return str(valid[0])  # smallest = most accurate
+        # 🔥 IMPORTANT FIX → smallest amount
+        return str(min(valid))
 
     return "unknown"
 
@@ -163,17 +166,12 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # 🔥 OCR number only (main fix)
-        number_text = ocr_number_only(image)
+        # 🔥 EASY OCR
+        text = run_ocr(image)
 
-        # 🔥 fallback OCR (for bank/status)
-        full_text = pytesseract.image_to_string(image, lang='eng+my')
-
-        print("FULL OCR:", full_text)
-
-        bank = detect_bank(image, full_text)
-        amount = extract_amount(number_text)
-        status = get_status(full_text)
+        bank = detect_bank(text)
+        amount = extract_amount(text)
+        status = get_status(text)
 
         print("FINAL:", amount, bank, status)
 
