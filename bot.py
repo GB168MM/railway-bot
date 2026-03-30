@@ -3,24 +3,18 @@ from flask import Flask, request
 import os
 import requests
 from datetime import datetime
-import easyocr
+import pytesseract
 from PIL import Image
 import io
 import re
 
-print("BOT STARTING...")
-
-# ================= CONFIG =================
-TOKEN = os.environ.get("BOT_TOKEN")
-BASE_URL = "https://beautiful-delight-production-79cf.up.railway.app"
-
-print("TOKEN:", TOKEN)
-
 # ================= OCR =================
-reader = easyocr.Reader(['en', 'my'], gpu=False)
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 # ================= BOT =================
+TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
+
 app = Flask(__name__)
 
 user_source = {}
@@ -45,13 +39,6 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     except Exception as e:
         print("Sheet Error:", e)
 
-# ================= OCR =================
-def run_ocr(image):
-    result = reader.readtext(image)
-    text = "\n".join([r[1] for r in result])
-    print("OCR TEXT:\n", text)
-    return text
-
 # ================= UTIL =================
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
@@ -62,85 +49,87 @@ def mm_to_en(text):
 
 def clean_text(text):
     text = mm_to_en(text)
-    text = text.replace(",", "")
+    text = text.replace("J", "2")
     text = text.replace("O", "0")
     text = text.replace("o", "0")
-    text = text.replace("J", "2")
+    text = text.replace(",", "")
     return text
 
-# ================= BANK =================
-def detect_bank(text):
+# ================= BANK DETECT =================
+def detect_bank(image, text):
     t = text.lower()
+
     if "kbz" in t:
         return "KBZ"
+
     if "wave" in t:
         return "Wave"
-    if "kpay" in t or "k pay" in t:
-        return "KPay"
+
+    if "ကျပ်" in text:
+        return "Wave"
+
     return "unknown"
 
-# ================= AMOUNT =================
-def extract_amount(text):
+# ================= KBZ =================
+def extract_kbz_amount(text):
     text = clean_text(text)
-    lines = text.split("\n")
 
-    keywords = ["amount", "send", "sent", "transfer", "paid", "ပို့", "လွှဲ"]
-
-    # PRIORITY 1
-    for line in lines:
-        l = line.lower()
-        if any(k in l for k in keywords):
-            nums = re.findall(r"\d{3,}", line)
-            for n in nums:
-                val = int(n)
-                if 1000 <= val <= 5000000:
-                    print("AMOUNT (keyword):", val)
-                    return str(val)
-
-    # PRIORITY 2
-    patterns = [
-        r'(\d{3,})\s*kyat',
-        r'(\d{3,})\s*ks',
-        r'(\d{3,})\s*ကျပ်'
-    ]
-
-    for p in patterns:
-        match = re.search(p, text.lower())
-        if match:
-            val = int(match.group(1))
-            if 1000 <= val <= 5000000:
-                print("AMOUNT (currency):", val)
-                return str(val)
-
-    # PRIORITY 3
     nums = re.findall(r"\d{4,}", text)
 
     valid = []
     for n in nums:
         val = int(n)
-
-        if str(val).startswith("09"):
-            continue
-        if val > 5000000:
-            continue
-        if val < 1000:
-            continue
-
-        valid.append(val)
-
-    print("ALL NUMBERS:", valid)
+        if 1000 <= val <= 10000000:
+            valid.append(val)
 
     if valid:
-        val = sorted(valid)[0]
-        print("AMOUNT (fallback):", val)
-        return str(val)
+        return str(max(valid))
+
+    return "unknown"
+
+# ================= WAVE (FIXED) =================
+def extract_wave_amount(image):
+    gray = image.convert("L")
+
+    text = pytesseract.image_to_string(
+        gray,
+        lang='eng+my',
+        config='--psm 6'
+    )
+
+    print("RAW OCR:", text)
+
+    text = clean_text(text)
+
+    print("CLEAN OCR:", text)
+
+    # ✅ priority: number + ကျပ်
+    matches = re.findall(r"(\d{4,})\s*ကျပ်", text)
+
+    if matches:
+        print("MATCH KYAT:", matches)
+        return matches[-1]
+
+    # ✅ fallback: 1xxxx pattern (Wave mostly)
+    matches = re.findall(r"\b(1\d{4})\b", text)
+
+    if matches:
+        print("MATCH 1XXXX:", matches)
+        return matches[0]
+
+    # ✅ last fallback
+    nums = re.findall(r"\d{4,}", text)
+    if nums:
+        nums = [int(n) for n in nums if 1000 <= int(n) <= 10000000]
+        if nums:
+            return str(max(nums))
 
     return "unknown"
 
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "အောင်မြင်" in t:
+    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
         return "success"
     return "unknown"
 
@@ -184,13 +173,22 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        text = run_ocr(image)
+        # OCR TEXT
+        text = pytesseract.image_to_string(image, lang='eng+my')
+        print("OCR TEXT:", text)
 
-        bank = detect_bank(text)
-        amount = extract_amount(text)
+        bank = detect_bank(image, text)
+
+        if bank == "KBZ":
+            amount = extract_kbz_amount(text)
+        elif bank == "Wave":
+            amount = extract_wave_amount(image)
+        else:
+            amount = "unknown"
+
         status = get_status(text)
 
-        print("FINAL RESULT:", amount, bank, status)
+        print("FINAL:", amount, bank, status)
 
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
@@ -211,6 +209,7 @@ def home():
 # ================= RUN =================
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(url=f"{BASE_URL}/{TOKEN}")
-    print("Webhook set to:", f"{BASE_URL}/{TOKEN}")
+    bot.set_webhook(
+        url=f"https://beautiful-delight-production-79cf.up.railway.app/{TOKEN}"
+    )
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
