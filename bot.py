@@ -59,17 +59,17 @@ def fix_ocr_errors(text):
     return text
 
 # ================= PREPROCESS =================
-def preprocess_image(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+def preprocess_wave_strong(pil_image):
+    img = np.array(pil_image)
 
-    # adaptive threshold (best for Wave)
-    thresh = cv2.adaptiveThreshold(
-        gray, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        11, 2
-    )
-    return thresh
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+
+    lower = np.array([0, 0, 0])
+    upper = np.array([180, 255, 120])
+
+    mask = cv2.inRange(hsv, lower, upper)
+
+    return mask
 
 # ================= BANK =================
 def detect_bank(image, text):
@@ -78,7 +78,6 @@ def detect_bank(image, text):
     if "kbz" in t:
         return "KBZ"
 
-    # Wave yellow detect
     small = image.resize((50,50))
     pixels = list(small.getdata())
 
@@ -111,27 +110,26 @@ def extract_kbz_amount(text):
 
     return str(max(valid)) if valid else "unknown"
 
-# ================= WAVE (FINAL FIX 🔥) =================
+# ================= WAVE (ULTRA FIX) =================
 def extract_wave_amount(image):
     width, height = image.size
 
+    # 🔥 multiple tight scan zones
     areas = [
-        image.crop((0, 0, width, int(height * 0.4))),
-        image.crop((0, int(height * 0.2), width, int(height * 0.6))),
-        image.crop((0, int(height * 0.4), width, int(height * 0.8)))
+        image.crop((0, int(height * 0.2), width, int(height * 0.4))),
+        image.crop((0, int(height * 0.25), width, int(height * 0.5))),
+        image.crop((0, int(height * 0.3), width, int(height * 0.55)))
     ]
 
     results = []
 
     for i, area in enumerate(areas):
-        img = np.array(area)
-
-        processed = preprocess_image(img)
+        processed = preprocess_wave_strong(area)
 
         text = pytesseract.image_to_string(
             processed,
             lang='eng+my',
-            config='--psm 6'
+            config='--psm 7'
         )
 
         print(f"OCR AREA {i}:", text)
@@ -151,10 +149,12 @@ def extract_wave_amount(image):
     if not results:
         print("Fallback OCR...")
         text = pytesseract.image_to_string(image, lang='eng+my')
+
         text = mm_to_en(text)
         text = fix_ocr_errors(text)
 
         nums = re.findall(r"\d{4,}", text)
+
         for n in nums:
             val = int(n)
             if 1000 <= val <= 10000000:
