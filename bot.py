@@ -42,8 +42,8 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
 # ================= OCR =================
 def run_ocr(image):
     result = reader.readtext(image)
-    text = " ".join([r[1] for r in result])
-    print("OCR TEXT:", text)
+    text = "\n".join([r[1] for r in result])
+    print("OCR TEXT:\n", text)
     return text
 
 # ================= UTIL =================
@@ -76,8 +76,23 @@ def detect_bank(text):
 # ================= AMOUNT =================
 def extract_amount(text):
     text = clean_text(text)
+    lines = text.split("\n")
 
-    # keyword priority
+    # 🔥 PRIORITY 1 → amount keyword line
+    keywords = ["amount", "send", "sent", "transfer", "paid", "ပို့", "လွှဲ"]
+
+    for line in lines:
+        l = line.lower()
+
+        if any(k in l for k in keywords):
+            nums = re.findall(r"\d{3,}", line)
+            for n in nums:
+                val = int(n)
+                if 1000 <= val <= 5000000:
+                    print("AMOUNT (keyword):", val)
+                    return str(val)
+
+    # 🔥 PRIORITY 2 → kyat / ks / ကျပ်
     patterns = [
         r'(\d{3,})\s*kyat',
         r'(\d{3,})\s*ks',
@@ -89,20 +104,19 @@ def extract_amount(text):
         if match:
             val = int(match.group(1))
             if 1000 <= val <= 5000000:
+                print("AMOUNT (currency):", val)
                 return str(val)
 
-    # fallback
+    # 🔥 PRIORITY 3 → smart filter
     nums = re.findall(r"\d{4,}", text)
 
     valid = []
     for n in nums:
         val = int(n)
 
-        # ❌ phone number remove
         if str(val).startswith("09"):
             continue
 
-        # ❌ too big remove
         if val > 5000000:
             continue
 
@@ -114,8 +128,10 @@ def extract_amount(text):
     print("ALL NUMBERS:", valid)
 
     if valid:
-        # 🔥 IMPORTANT FIX → smallest amount
-        return str(min(valid))
+        # 🔥 smallest realistic transfer
+        val = sorted(valid)[0]
+        print("AMOUNT (fallback):", val)
+        return str(val)
 
     return "unknown"
 
@@ -166,14 +182,14 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # 🔥 EASY OCR
+        # 🔥 OCR
         text = run_ocr(image)
 
         bank = detect_bank(text)
         amount = extract_amount(text)
         status = get_status(text)
 
-        print("FINAL:", amount, bank, status)
+        print("FINAL RESULT:", amount, bank, status)
 
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
