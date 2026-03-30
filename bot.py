@@ -20,6 +20,7 @@ app = Flask(__name__)
 user_source = {}
 first_msg_saved = {}
 
+# 👉 Google Apps Script URL
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 # ================= SEND =================
@@ -40,7 +41,6 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     try:
         res = requests.post(GOOGLE_SHEET_URL, json=data)
         print("STATUS:", res.status_code)
-        print("RESPONSE:", res.text)
     except Exception as e:
         print("SHEET ERROR:", e)
 
@@ -54,8 +54,7 @@ def mm_to_en(text):
 
 def clean_text(text):
     text = mm_to_en(text)
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
+    text = text.replace("O", "0").replace("o", "0")
     text = text.replace(",", "")
     return text
 
@@ -63,10 +62,10 @@ def clean_text(text):
 def detect_bank(text):
     t = text.lower()
 
-    if "kbz" in t:
+    if "kbz" in t or "kpay" in t:
         return "KBZ"
 
-    if "wave" in t or "ကျပ်" in text:
+    if "wave" in t or "ဝေ့" in text or "ကျပ်" in text:
         return "Wave"
 
     return "unknown"
@@ -74,7 +73,6 @@ def detect_bank(text):
 # ================= KBZ =================
 def extract_kbz_amount(text):
     text = clean_text(text)
-
     nums = re.findall(r"\d{4,}", text)
     nums = [int(n) for n in nums if 1000 <= int(n) <= 10000000]
 
@@ -87,19 +85,25 @@ def extract_kbz_amount(text):
 def extract_wave_amount(text):
     text = clean_text(text)
 
-    print("CLEAN TEXT:", text)
+    print("WAVE TEXT:", text)
 
-    # 1️⃣ ကျပ် ပါတာကို အရင်ယူ
+    # ကျပ် ပါတာကိုယူ
     matches = re.findall(r"(\d{4,6})\s*ကျပ်", text)
     if matches:
         return matches[-1]
 
-    # 2️⃣ 1000~100000 ထဲက အနည်းဆုံးကိုယူ
+    # Ks version
+    matches = re.findall(r"(\d{4,6})\s*ks", text.lower())
+    if matches:
+        return matches[-1]
+
+    # fallback
     nums = re.findall(r"\d{4,6}", text)
     nums = [int(n) for n in nums if 1000 <= int(n) <= 100000]
 
     if nums:
-        return str(min(nums))
+        nums.sort()
+        return str(nums[len(nums)//2])
 
     return "unknown"
 
@@ -122,29 +126,15 @@ def start(msg):
     user_source[uid] = source
     first_msg_saved[uid] = False
 
-    print("START:", uid)
-
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
-# ================= TEXT =================
-@bot.message_handler(func=lambda m: True, content_types=['text'])
-def first_msg(msg):
-    uid = msg.chat.id
-    source = user_source.get(uid, "unknown")
-
-    print("TEXT:", msg.text)
-
-    if not first_msg_saved.get(uid, False):
-        send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
-        first_msg_saved[uid] = True
-
-# ================= PHOTO =================
+# ================= PHOTO (IMPORTANT FIRST) =================
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
+    print("PHOTO RECEIVED")
+
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
-
-    print("PHOTO RECEIVED")
 
     try:
         file_id = msg.photo[-1].file_id
@@ -156,26 +146,51 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        text = pytesseract.image_to_string(image, lang='eng+my')
-        print("OCR TEXT:", text)
+        # OCR
+        text = pytesseract.image_to_string(image, lang='eng+my', config='--psm 6')
+        text_clean = clean_text(text)
 
-        bank = detect_bank(text)
+        print("OCR TEXT:", text_clean)
 
+        # 🔥 Filter only payment slip
+        if not any(word in text_clean.lower() for word in ["wave", "kbz", "kpay", "ks", "ကျပ်"]):
+            print("NOT PAYMENT SLIP ❌")
+            return
+
+        # Bank detect
+        bank = detect_bank(text_clean)
+
+        # Amount extract
         if bank == "KBZ":
-            amount = extract_kbz_amount(text)
+            amount = extract_kbz_amount(text_clean)
         elif bank == "Wave":
-            amount = extract_wave_amount(text)
+            amount = extract_wave_amount(text_clean)
         else:
             amount = "unknown"
 
-        status = get_status(text)
+        if amount == "unknown":
+            print("AMOUNT NOT FOUND ❌")
+            return
+
+        status = get_status(text_clean)
 
         print("FINAL:", amount, bank, status)
 
+        # Save
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
-        print("ERROR:", e)
+        print("PHOTO ERROR:", e)
+
+# ================= TEXT (LAST) =================
+@bot.message_handler(func=lambda m: True, content_types=['text'])
+def first_msg(msg):
+    uid = msg.chat.id
+    source = user_source.get(uid, "unknown")
+
+    if not first_msg_saved.get(uid, False):
+        send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
+        first_msg_saved[uid] = True
 
 # ================= WEBHOOK =================
 @app.route("/", methods=["POST"])
@@ -186,7 +201,7 @@ def webhook():
 
 @app.route("/")
 def home():
-    return "Bot Running"
+    return "BOT RUNNING"
 
 # ================= RUN =================
 if __name__ == "__main__":
