@@ -3,5 +3,3 @@ flask
 requests
 pillow
 pytesseract
-numpy
-# rebuild final v1
