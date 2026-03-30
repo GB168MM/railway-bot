@@ -3,17 +3,17 @@ from flask import Flask, request
 import os
 import requests
 from datetime import datetime
-import pytesseract
 from PIL import Image
 import io
 import re
-
-import cv2
 import numpy as np
+import cv2
 
-# ================= OCR =================
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
-print("TESSERACT LANGS:", pytesseract.get_languages(config=''))
+# ✅ AI OCR
+from paddleocr import PaddleOCR
+
+# init OCR (one time)
+ocr = PaddleOCR(use_angle_cls=True, lang='en')
 
 # ================= BOT =================
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -21,10 +21,18 @@ bot = telebot.TeleBot(TOKEN)
 
 app = Flask(__name__)
 
+GOOGLE_SHEET_URL = "YOUR_GOOGLE_SCRIPT_URL"
+
 user_source = {}
 first_msg_saved = {}
 
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
+# ================= UTIL =================
+def mm_to_en(text):
+    mm = "၀၁၂၃၄၅၆၇၈၉"
+    en = "0123456789"
+    for m, e in zip(mm, en):
+        text = text.replace(m, e)
+    return text
 
 # ================= SEND =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
@@ -43,41 +51,38 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     except Exception as e:
         print("Sheet Error:", e)
 
-# ================= UTIL =================
-def mm_to_en(text):
-    mm = "၀၁၂၃၄၅၆၇၈၉"
-    en = "0123456789"
-    for m, e in zip(mm, en):
-        text = text.replace(m, e)
-    return text
+# ================= OCR =================
+def extract_amount_paddle(image):
+    img = np.array(image)
 
-def fix_ocr_errors(text):
-    text = text.replace("J", "2")
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
-    text = text.replace("B", "8")
-    return text
+    result = ocr.ocr(img)
 
-# ================= PREPROCESS =================
-def preprocess_wave_strong(pil_image):
-    img = np.array(pil_image)
+    texts = []
+    for line in result:
+        for word in line:
+            texts.append(word[1][0])
 
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    full_text = " ".join(texts)
+    print("OCR TEXT:", full_text)
 
-    lower = np.array([0, 0, 0])
-    upper = np.array([180, 255, 120])
+    full_text = mm_to_en(full_text)
+    full_text = full_text.replace(",", "")
 
-    mask = cv2.inRange(hsv, lower, upper)
+    nums = re.findall(r"\d{4,}", full_text)
 
-    return mask
+    valid = []
+    for n in nums:
+        val = int(n)
+        if 1000 <= val <= 10000000:
+            valid.append(val)
+
+    if valid:
+        return str(max(valid)), full_text
+
+    return "unknown", full_text
 
 # ================= BANK =================
-def detect_bank(image, text):
-    t = text.lower()
-
-    if "kbz" in t:
-        return "KBZ"
-
+def detect_bank(image):
     small = image.resize((50,50))
     pixels = list(small.getdata())
 
@@ -89,85 +94,12 @@ def detect_bank(image, text):
     if yellow > 500:
         return "Wave"
 
-    if "ကျပ်" in t or "အောင်မြင်" in t:
-        return "Wave"
-
     return "unknown"
-
-# ================= KBZ =================
-def extract_kbz_amount(text):
-    text = mm_to_en(text)
-    text = fix_ocr_errors(text)
-    text = text.replace(",", "")
-
-    nums = re.findall(r"\d{4,}", text)
-
-    valid = []
-    for n in nums:
-        val = int(n)
-        if 1000 <= val <= 10000000:
-            valid.append(val)
-
-    return str(max(valid)) if valid else "unknown"
-
-# ================= WAVE (ULTRA FIX) =================
-def extract_wave_amount(image):
-    width, height = image.size
-
-    # 🔥 multiple tight scan zones
-    areas = [
-        image.crop((0, int(height * 0.2), width, int(height * 0.4))),
-        image.crop((0, int(height * 0.25), width, int(height * 0.5))),
-        image.crop((0, int(height * 0.3), width, int(height * 0.55)))
-    ]
-
-    results = []
-
-    for i, area in enumerate(areas):
-        processed = preprocess_wave_strong(area)
-
-        text = pytesseract.image_to_string(
-            processed,
-            lang='eng+my',
-            config='--psm 7'
-        )
-
-        print(f"OCR AREA {i}:", text)
-
-        text = mm_to_en(text)
-        text = fix_ocr_errors(text)
-        text = text.replace(",", "")
-
-        nums = re.findall(r"\d{4,}", text)
-
-        for n in nums:
-            val = int(n)
-            if 1000 <= val <= 10000000:
-                results.append(val)
-
-    # 🔥 fallback (full image OCR)
-    if not results:
-        print("Fallback OCR...")
-        text = pytesseract.image_to_string(image, lang='eng+my')
-
-        text = mm_to_en(text)
-        text = fix_ocr_errors(text)
-
-        nums = re.findall(r"\d{4,}", text)
-
-        for n in nums:
-            val = int(n)
-            if 1000 <= val <= 10000000:
-                results.append(val)
-
-    print("FINAL RESULTS:", results)
-
-    return str(max(results)) if results else "unknown"
 
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
+    if "success" in t or "completed" in t or "thank" in t:
         return "success"
     return "unknown"
 
@@ -211,26 +143,9 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # FULL OCR
-        full_text = pytesseract.image_to_string(
-            image,
-            lang='eng+my',
-            config='--psm 6'
-        )
+        bank = detect_bank(image)
 
-        full_text = mm_to_en(full_text)
-        full_text = fix_ocr_errors(full_text)
-
-        print("FULL OCR:", full_text)
-
-        bank = detect_bank(image, full_text)
-
-        if bank == "KBZ":
-            amount = extract_kbz_amount(full_text)
-        elif bank == "Wave":
-            amount = extract_wave_amount(image)
-        else:
-            amount = "unknown"
+        amount, full_text = extract_amount_paddle(image)
 
         status = get_status(full_text)
 
