@@ -8,14 +8,11 @@ from PIL import Image
 import io
 import re
 
-# ✅ NEW
 import cv2
 import numpy as np
 
 # ================= OCR =================
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
-
-# DEBUG
 print("TESSERACT LANGS:", pytesseract.get_languages(config=''))
 
 # ================= BOT =================
@@ -54,15 +51,6 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-def clean_text(text):
-    text = mm_to_en(text)
-    text = text.replace("J", "2")
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
-    text = text.replace(",", "")
-    return text
-
-# ✅ NEW OCR FIX
 def fix_ocr_errors(text):
     text = text.replace("J", "2")
     text = text.replace("O", "0")
@@ -70,15 +58,17 @@ def fix_ocr_errors(text):
     text = text.replace("B", "8")
     return text
 
-# ✅ NEW IMAGE PREPROCESS
-def preprocess_image(pil_image):
-    img = np.array(pil_image)
-
+# ================= PREPROCESS =================
+def preprocess_image(img):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (5,5), 0)
 
-    _, thresh = cv2.threshold(blur, 150, 255, cv2.THRESH_BINARY)
-
+    # adaptive threshold (best for Wave)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
     return thresh
 
 # ================= BANK =================
@@ -88,7 +78,7 @@ def detect_bank(image, text):
     if "kbz" in t:
         return "KBZ"
 
-    # Wave (yellow detect)
+    # Wave yellow detect
     small = image.resize((50,50))
     pixels = list(small.getdata())
 
@@ -107,70 +97,72 @@ def detect_bank(image, text):
 
 # ================= KBZ =================
 def extract_kbz_amount(text):
-    text = clean_text(text)
+    text = mm_to_en(text)
     text = fix_ocr_errors(text)
+    text = text.replace(",", "")
 
     nums = re.findall(r"\d{4,}", text)
 
     valid = []
     for n in nums:
         val = int(n)
+        if 1000 <= val <= 10000000:
+            valid.append(val)
 
-        if val < 1000:
-            continue
-        if val > 10000000:
-            continue
+    return str(max(valid)) if valid else "unknown"
 
-        valid.append(val)
-
-    if valid:
-        return str(max(valid))
-
-    return "unknown"
-
-# ================= WAVE =================
+# ================= WAVE (FINAL FIX 🔥) =================
 def extract_wave_amount(image):
     width, height = image.size
 
-    # scan top area
-    area = image.crop((0, int(height * 0.2), width, int(height * 0.5)))
-
-    processed = preprocess_image(area)
-
-    text = pytesseract.image_to_string(
-        processed,
-        lang='eng+my',
-        config='--psm 6'
-    )
-
-    print("RAW OCR:", text)
-
-    text = mm_to_en(text)
-    text = fix_ocr_errors(text)
-    text = text.replace(",", "")
-
-    print("CLEAN OCR:", text)
-
-    nums = re.findall(r"\d{4,}", text)
+    areas = [
+        image.crop((0, 0, width, int(height * 0.4))),
+        image.crop((0, int(height * 0.2), width, int(height * 0.6))),
+        image.crop((0, int(height * 0.4), width, int(height * 0.8)))
+    ]
 
     results = []
 
-    for n in nums:
-        val = int(n)
+    for i, area in enumerate(areas):
+        img = np.array(area)
 
-        if val < 1000:
-            continue
-        if val > 10000000:
-            continue
+        processed = preprocess_image(img)
 
-        results.append(val)
+        text = pytesseract.image_to_string(
+            processed,
+            lang='eng+my',
+            config='--psm 6'
+        )
 
-    print("WAVE RESULTS:", results)
+        print(f"OCR AREA {i}:", text)
 
-    if results:
-        return str(max(results))
+        text = mm_to_en(text)
+        text = fix_ocr_errors(text)
+        text = text.replace(",", "")
 
-    return "unknown"
+        nums = re.findall(r"\d{4,}", text)
+
+        for n in nums:
+            val = int(n)
+            if 1000 <= val <= 10000000:
+                results.append(val)
+
+    # 🔥 fallback (full image OCR)
+    if not results:
+        print("Fallback OCR...")
+        text = pytesseract.image_to_string(image, lang='eng+my')
+        text = mm_to_en(text)
+        text = fix_ocr_errors(text)
+
+        nums = re.findall(r"\d{4,}", text)
+        for n in nums:
+            val = int(n)
+            if 1000 <= val <= 10000000:
+                results.append(val)
+
+    print("FINAL RESULTS:", results)
+
+    return str(max(results)) if results else "unknown"
 
 # ================= STATUS =================
 def get_status(text):
@@ -219,30 +211,28 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # ✅ FULL OCR WITH PREPROCESS
-        processed_full = preprocess_image(image)
-
-        text = pytesseract.image_to_string(
-            processed_full,
+        # FULL OCR
+        full_text = pytesseract.image_to_string(
+            image,
             lang='eng+my',
             config='--psm 6'
         )
 
-        text = mm_to_en(text)
-        text = fix_ocr_errors(text)
+        full_text = mm_to_en(full_text)
+        full_text = fix_ocr_errors(full_text)
 
-        print("OCR TEXT:\n", text)
+        print("FULL OCR:", full_text)
 
-        bank = detect_bank(image, text)
+        bank = detect_bank(image, full_text)
 
         if bank == "KBZ":
-            amount = extract_kbz_amount(text)
+            amount = extract_kbz_amount(full_text)
         elif bank == "Wave":
             amount = extract_wave_amount(image)
         else:
             amount = "unknown"
 
-        status = get_status(text)
+        status = get_status(full_text)
 
         print("FINAL:", amount, bank, status)
 
