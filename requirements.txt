@@ -1,7 +1,5 @@
 pyTelegramBotAPI
 flask
 requests
+pytesseract
 Pillow
-numpy
-paddleocr
-paddlepaddle
