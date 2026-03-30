@@ -7,12 +7,10 @@ from PIL import Image
 import io
 import re
 import numpy as np
-import cv2
 
-# ✅ AI OCR
 from paddleocr import PaddleOCR
 
-# init OCR (one time)
+# ================= OCR =================
 ocr = PaddleOCR(use_angle_cls=True, lang='en')
 
 # ================= BOT =================
@@ -52,7 +50,7 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         print("Sheet Error:", e)
 
 # ================= OCR =================
-def extract_amount_paddle(image):
+def extract_amount(image):
     img = np.array(image)
 
     result = ocr.ocr(img)
@@ -68,30 +66,42 @@ def extract_amount_paddle(image):
     full_text = mm_to_en(full_text)
     full_text = full_text.replace(",", "")
 
-    nums = re.findall(r"\d{4,}", full_text)
+    # 🔥 keyword-based filtering
+    keywords = ["amount", "kyat", "ks", "ကျပ်"]
 
-    valid = []
-    for n in nums:
-        val = int(n)
-        if 1000 <= val <= 10000000:
-            valid.append(val)
+    words = full_text.split()
+    candidates = []
 
-    if valid:
-        return str(max(valid)), full_text
+    for i, w in enumerate(words):
+        if any(k in w.lower() for k in keywords):
+            for j in range(i, min(i+3, len(words))):
+                nums = re.findall(r"\d{4,}", words[j])
+                for n in nums:
+                    val = int(n)
+                    if 1000 <= val <= 10000000:
+                        candidates.append(val)
+
+    # fallback
+    if not candidates:
+        nums = re.findall(r"\d{4,}", full_text)
+        for n in nums:
+            val = int(n)
+            if 1000 <= val <= 10000000:
+                candidates.append(val)
+
+    if candidates:
+        return str(max(candidates)), full_text
 
     return "unknown", full_text
 
 # ================= BANK =================
-def detect_bank(image):
-    small = image.resize((50,50))
-    pixels = list(small.getdata())
+def detect_bank(text):
+    t = text.lower()
 
-    yellow = 0
-    for r,g,b in pixels:
-        if r > 200 and g > 200 and b < 150:
-            yellow += 1
+    if "kbz" in t or "kpay" in t:
+        return "KBZ"
 
-    if yellow > 500:
+    if "wave" in t or "ကျပ်" in t:
         return "Wave"
 
     return "unknown"
@@ -99,7 +109,7 @@ def detect_bank(image):
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t:
+    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
         return "success"
     return "unknown"
 
@@ -143,10 +153,8 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        bank = detect_bank(image)
-
-        amount, full_text = extract_amount_paddle(image)
-
+        amount, full_text = extract_amount(image)
+        bank = detect_bank(full_text)
         status = get_status(full_text)
 
         print("FINAL:", amount, bank, status)
