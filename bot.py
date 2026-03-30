@@ -1,19 +1,15 @@
-import os
-os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
-
 import telebot
 from flask import Flask, request
+import os
 import requests
 from datetime import datetime
+import pytesseract
 from PIL import Image
 import io
 import re
-import numpy as np
-
-from paddleocr import PaddleOCR
 
 # ================= OCR =================
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 # ================= BOT =================
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -34,6 +30,14 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
+def clean_text(text):
+    text = mm_to_en(text)
+    text = text.replace("O", "0")
+    text = text.replace("o", "0")
+    text = text.replace("J", "2")
+    text = text.replace(",", "")
+    return text
+
 # ================= SEND =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
@@ -51,27 +55,26 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     except Exception as e:
         print("Sheet Error:", e)
 
-# ================= OCR =================
-def extract_amount(image):
-    img = np.array(image)
+# ================= BANK =================
+def detect_bank(text):
+    t = text.lower()
 
-    result = ocr.ocr(img)
+    if "kbz" in t or "kpay" in t:
+        return "KBZ"
 
-    texts = []
-    for line in result:
-        for word in line:
-            texts.append(word[1][0])
+    if "wave" in t or "ကျပ်" in t:
+        return "Wave"
 
-    full_text = " ".join(texts)
-    print("OCR TEXT:", full_text)
+    return "unknown"
 
-    full_text = mm_to_en(full_text)
-    full_text = full_text.replace(",", "")
+# ================= AMOUNT =================
+def extract_amount(text):
+    text = clean_text(text)
 
-    # 🔥 keyword-based filtering
-    keywords = ["amount", "kyat", "ks", "ကျပ်"]
+    # 🔥 keyword-based
+    keywords = ["amount", "ks", "kyat", "ကျပ်"]
 
-    words = full_text.split()
+    words = text.split()
     candidates = []
 
     for i, w in enumerate(words):
@@ -85,33 +88,21 @@ def extract_amount(image):
 
     # fallback
     if not candidates:
-        nums = re.findall(r"\d{4,}", full_text)
+        nums = re.findall(r"\d{4,}", text)
         for n in nums:
             val = int(n)
             if 1000 <= val <= 10000000:
                 candidates.append(val)
 
     if candidates:
-        return str(max(candidates)), full_text
-
-    return "unknown", full_text
-
-# ================= BANK =================
-def detect_bank(text):
-    t = text.lower()
-
-    if "kbz" in t or "kpay" in t:
-        return "KBZ"
-
-    if "wave" in t or "ကျပ်" in t:
-        return "Wave"
+        return str(max(candidates))
 
     return "unknown"
 
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
+    if "success" in t or "completed" in t or "အောင်မြင်" in t:
         return "success"
     return "unknown"
 
@@ -155,9 +146,18 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        amount, full_text = extract_amount(image)
-        bank = detect_bank(full_text)
-        status = get_status(full_text)
+        # OCR
+        text = pytesseract.image_to_string(
+            image,
+            lang='eng+my',
+            config='--psm 6'
+        )
+
+        print("OCR TEXT:", text)
+
+        amount = extract_amount(text)
+        bank = detect_bank(text)
+        status = get_status(text)
 
         print("FINAL:", amount, bank, status)
 
