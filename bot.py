@@ -17,26 +17,10 @@ bot = telebot.TeleBot(TOKEN)
 
 app = Flask(__name__)
 
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
-
 user_source = {}
 first_msg_saved = {}
 
-# ================= UTIL =================
-def mm_to_en(text):
-    mm = "၀၁၂၃၄၅၆၇၈၉"
-    en = "0123456789"
-    for m, e in zip(mm, en):
-        text = text.replace(m, e)
-    return text
-
-def clean_text(text):
-    text = mm_to_en(text)
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
-    text = text.replace("J", "2")
-    text = text.replace(",", "")
-    return text
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
 # ================= SEND =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
@@ -55,54 +39,76 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     except Exception as e:
         print("Sheet Error:", e)
 
+# ================= UTIL =================
+def mm_to_en(text):
+    mm = "၀၁၂၃၄၅၆၇၈၉"
+    en = "0123456789"
+    for m, e in zip(mm, en):
+        text = text.replace(m, e)
+    return text
+
+def clean_text(text):
+    text = mm_to_en(text)
+    text = text.replace("J", "2")
+    text = text.replace("O", "0")
+    text = text.replace("o", "0")
+    text = text.replace(",", "")
+    return text
+
 # ================= BANK =================
-def detect_bank(text):
+def detect_bank(image, text):
     t = text.lower()
 
-    if "kbz" in t or "kpay" in t:
+    if "kbz" in t:
         return "KBZ"
 
-    if "wave" in t or "ကျပ်" in t:
+    # Wave detect (yellow)
+    small = image.resize((50, 50))
+    pixels = list(small.getdata())
+
+    yellow = 0
+    for r, g, b in pixels:
+        if r > 200 and g > 200 and b < 150:
+            yellow += 1
+
+    if yellow > 500:
+        return "Wave"
+
+    if "ကျပ်" in t or "wave" in t:
         return "Wave"
 
     return "unknown"
 
-# ================= AMOUNT =================
+# ================= AMOUNT FIX 🔥 =================
 def extract_amount(text):
     text = clean_text(text)
 
-    # 🔥 keyword-based
-    keywords = ["amount", "ks", "kyat", "ကျပ်"]
+    nums = re.findall(r"\d{4,}", text)
 
-    words = text.split()
-    candidates = []
+    valid = []
 
-    for i, w in enumerate(words):
-        if any(k in w.lower() for k in keywords):
-            for j in range(i, min(i+3, len(words))):
-                nums = re.findall(r"\d{4,}", words[j])
-                for n in nums:
-                    val = int(n)
-                    if 1000 <= val <= 10000000:
-                        candidates.append(val)
+    for n in nums:
+        val = int(n)
 
-    # fallback
-    if not candidates:
-        nums = re.findall(r"\d{4,}", text)
-        for n in nums:
-            val = int(n)
-            if 1000 <= val <= 10000000:
-                candidates.append(val)
+        if val < 1000:
+            continue
+        if val > 500000:   # 🔥 important filter
+            continue
 
-    if candidates:
-        return str(max(candidates))
+        valid.append(val)
+
+    print("ALL NUMBERS:", valid)
+
+    if valid:
+        valid.sort()
+        return str(valid[0])   # 🔥 smallest value
 
     return "unknown"
 
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "အောင်မြင်" in t:
+    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
         return "success"
     return "unknown"
 
@@ -146,17 +152,15 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # OCR
-        text = pytesseract.image_to_string(
-            image,
-            lang='eng+my',
-            config='--psm 6'
-        )
+        # OCR FULL
+        text = pytesseract.image_to_string(image, lang='eng+my')
 
-        print("OCR TEXT:", text)
+        print("OCR TEXT:\n", text)
+
+        bank = detect_bank(image, text)
 
         amount = extract_amount(text)
-        bank = detect_bank(text)
+
         status = get_status(text)
 
         print("FINAL:", amount, bank, status)
