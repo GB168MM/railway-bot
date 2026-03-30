@@ -8,8 +8,15 @@ from PIL import Image
 import io
 import re
 
+# ✅ NEW
+import cv2
+import numpy as np
+
 # ================= OCR =================
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+
+# DEBUG
+print("TESSERACT LANGS:", pytesseract.get_languages(config=''))
 
 # ================= BOT =================
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -55,6 +62,25 @@ def clean_text(text):
     text = text.replace(",", "")
     return text
 
+# ✅ NEW OCR FIX
+def fix_ocr_errors(text):
+    text = text.replace("J", "2")
+    text = text.replace("O", "0")
+    text = text.replace("o", "0")
+    text = text.replace("B", "8")
+    return text
+
+# ✅ NEW IMAGE PREPROCESS
+def preprocess_image(pil_image):
+    img = np.array(pil_image)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
+
+    _, thresh = cv2.threshold(blur, 150, 255, cv2.THRESH_BINARY)
+
+    return thresh
+
 # ================= BANK =================
 def detect_bank(image, text):
     t = text.lower()
@@ -82,6 +108,7 @@ def detect_bank(image, text):
 # ================= KBZ =================
 def extract_kbz_amount(text):
     text = clean_text(text)
+    text = fix_ocr_errors(text)
 
     nums = re.findall(r"\d{4,}", text)
 
@@ -101,42 +128,42 @@ def extract_kbz_amount(text):
 
     return "unknown"
 
-# ================= WAVE (FINAL FIX 🔥) =================
+# ================= WAVE =================
 def extract_wave_amount(image):
     width, height = image.size
 
-    # 👉 TOP + MID scan
-    areas = [
-        image.crop((0, 0, width, int(height * 0.35))),
-        image.crop((0, int(height * 0.35), width, int(height * 0.75)))
-    ]
+    # scan top area
+    area = image.crop((0, int(height * 0.2), width, int(height * 0.5)))
+
+    processed = preprocess_image(area)
+
+    text = pytesseract.image_to_string(
+        processed,
+        lang='eng+my',
+        config='--psm 6'
+    )
+
+    print("RAW OCR:", text)
+
+    text = mm_to_en(text)
+    text = fix_ocr_errors(text)
+    text = text.replace(",", "")
+
+    print("CLEAN OCR:", text)
+
+    nums = re.findall(r"\d{4,}", text)
 
     results = []
 
-    for area in areas:
-        text = pytesseract.image_to_string(
-            area,
-            lang='eng',
-            config='--psm 6 -c tessedit_char_whitelist=0123456789.,'
-        )
+    for n in nums:
+        val = int(n)
 
-        print("WAVE OCR:", text)
+        if val < 1000:
+            continue
+        if val > 10000000:
+            continue
 
-        text = text.replace(",", "")
-        text = text.replace("J", "2")
-        text = text.replace("O", "0")
-
-        nums = re.findall(r"\d{4,}", text)
-
-        for n in nums:
-            val = int(n)
-
-            if val < 1000:
-                continue
-            if val > 10000000:
-                continue
-
-            results.append(val)
+        results.append(val)
 
     print("WAVE RESULTS:", results)
 
@@ -192,8 +219,17 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # FULL OCR
-        text = pytesseract.image_to_string(image, lang='eng+my')
+        # ✅ FULL OCR WITH PREPROCESS
+        processed_full = preprocess_image(image)
+
+        text = pytesseract.image_to_string(
+            processed_full,
+            lang='eng+my',
+            config='--psm 6'
+        )
+
+        text = mm_to_en(text)
+        text = fix_ocr_errors(text)
 
         print("OCR TEXT:\n", text)
 
