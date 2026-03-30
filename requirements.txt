@@ -4,3 +4,4 @@ requests
 Pillow
 easyocr
 numpy
+# rebuild v2
