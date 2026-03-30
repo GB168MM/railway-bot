@@ -49,10 +49,9 @@ def mm_to_en(text):
 
 def clean_text(text):
     text = mm_to_en(text)
-    text = text.replace("J", "2")
-    text = text.replace("O", "0")
-    text = text.replace("o", "0")
     text = text.replace(",", "")
+    text = text.replace("O", "0").replace("o", "0")
+    text = text.replace("J", "2")
     return text
 
 # ================= BANK =================
@@ -74,41 +73,71 @@ def detect_bank(image, text):
     if yellow > 500:
         return "Wave"
 
-    if "ကျပ်" in t or "wave" in t:
+    if "wave" in t or "ကျပ်" in t:
         return "Wave"
 
     return "unknown"
 
-# ================= AMOUNT FIX 🔥 =================
+# ================= 🔥 SMART AMOUNT EXTRACT =================
 def extract_amount(text):
     text = clean_text(text)
+    lower = text.lower()
 
-    nums = re.findall(r"\d{4,}", text)
+    print("CLEAN TEXT:", lower)
+
+    # 🔥 1. Find amount near keyword
+    patterns = [
+        r'(\d{3,})\s*kyat',
+        r'(\d{3,})\s*ks',
+        r'(\d{3,})\s*ကျပ်'
+    ]
+
+    for p in patterns:
+        match = re.search(p, lower)
+        if match:
+            val = int(match.group(1))
+            if 1000 <= val <= 500000:
+                print("FOUND KEYWORD:", val)
+                return str(val)
+
+    # 🔥 2. Find decimal format (15000.00)
+    match = re.search(r'(\d{4,})\.00', lower)
+    if match:
+        val = int(match.group(1))
+        if 1000 <= val <= 500000:
+            print("FOUND DECIMAL:", val)
+            return str(val)
+
+    # 🔥 3. Fallback (filter carefully)
+    nums = re.findall(r"\d{4,}", lower)
 
     valid = []
-
     for n in nums:
         val = int(n)
 
-        if val < 1000:
-            continue
-        if val > 500000:   # 🔥 important filter
+        # ❌ skip phone numbers
+        if str(val).startswith("09"):
             continue
 
-        valid.append(val)
+        # ❌ skip long txn ids
+        if len(str(val)) > 7:
+            continue
 
-    print("ALL NUMBERS:", valid)
+        if 1000 <= val <= 500000:
+            valid.append(val)
+
+    print("FALLBACK:", valid)
 
     if valid:
         valid.sort()
-        return str(valid[0])   # 🔥 smallest value
+        return str(valid[0])  # safest
 
     return "unknown"
 
 # ================= STATUS =================
 def get_status(text):
     t = text.lower()
-    if "success" in t or "completed" in t or "thank" in t or "အောင်မြင်" in t:
+    if "success" in t or "completed" in t or "အောင်မြင်" in t:
         return "success"
     return "unknown"
 
@@ -152,15 +181,17 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # OCR FULL
-        text = pytesseract.image_to_string(image, lang='eng+my')
+        # 🔥 OCR (important config)
+        text = pytesseract.image_to_string(
+            image,
+            lang='eng+my',
+            config='--psm 6'
+        )
 
         print("OCR TEXT:\n", text)
 
         bank = detect_bank(image, text)
-
         amount = extract_amount(text)
-
         status = get_status(text)
 
         print("FINAL:", amount, bank, status)
