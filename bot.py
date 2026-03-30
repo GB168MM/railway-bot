@@ -8,13 +8,14 @@ from PIL import Image
 import io
 import re
 
-# ================= OCR =================
+# ================= CONFIG =================
+TOKEN = os.environ.get("BOT_TOKEN")
+
+WEBHOOK_URL = "https://beautiful-delight-production-79cf.up.railway.app"
+
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
-# ================= BOT =================
-TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
-
 app = Flask(__name__)
 
 user_source = {}
@@ -35,7 +36,7 @@ def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
         "time": str(datetime.now())
     }
 
-    print("SENDING TO SHEET:", data)  # DEBUG
+    print("SENDING:", data)
 
     try:
         res = requests.post(GOOGLE_SHEET_URL, json=data)
@@ -76,15 +77,10 @@ def extract_kbz_amount(text):
     text = clean_text(text)
 
     nums = re.findall(r"\d{4,}", text)
+    nums = [int(n) for n in nums if 1000 <= int(n) <= 10000000]
 
-    valid = []
-    for n in nums:
-        val = int(n)
-        if 1000 <= val <= 10000000:
-            valid.append(val)
-
-    if valid:
-        return str(max(valid))
+    if nums:
+        return str(max(nums))
 
     return "unknown"
 
@@ -94,16 +90,14 @@ def extract_wave_amount(text):
 
     print("CLEAN TEXT:", text)
 
-    # Priority 1: number + ကျပ်
+    # Priority 1
     matches = re.findall(r"(\d{4,})\s*ကျပ်", text)
     if matches:
-        print("KYAT MATCH:", matches)
         return matches[-1]
 
-    # Priority 2: 5 digit (15000)
+    # Priority 2
     matches = re.findall(r"\b\d{5}\b", text)
     if matches:
-        print("5 DIGIT MATCH:", matches)
         return matches[0]
 
     # Fallback
@@ -111,7 +105,6 @@ def extract_wave_amount(text):
     nums = [int(n) for n in nums if 1000 <= int(n) <= 1000000]
 
     if nums:
-        print("FALLBACK:", nums)
         return str(max(nums))
 
     return "unknown"
@@ -135,7 +128,7 @@ def start(msg):
     user_source[uid] = source
     first_msg_saved[uid] = False
 
-    print("START RECEIVED:", uid, source)
+    print("START:", uid)
 
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
@@ -145,7 +138,7 @@ def first_msg(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
-    print("TEXT RECEIVED:", msg.text)
+    print("TEXT:", msg.text)
 
     if not first_msg_saved.get(uid, False):
         send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
@@ -169,9 +162,8 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # OCR
         text = pytesseract.image_to_string(image, lang='eng+my')
-        print("RAW OCR:", text)
+        print("OCR:", text)
 
         bank = detect_bank(text)
 
@@ -206,6 +198,6 @@ def home():
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(
-        url=f"https://beautiful-delight-production-79cf.up.railway.app/{TOKEN}"
+        url=f"{WEBHOOK_URL}/{TOKEN}"
     )
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
