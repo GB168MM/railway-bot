@@ -12,12 +12,10 @@ WORKDIR /app
 
 COPY . .
 
-# install requirements (without paddle)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 🔥 install paddle separately
-RUN pip install --no-cache-dir paddlepaddle==2.5.2 \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 🔥 install paddle (auto version)
+RUN pip install --no-cache-dir paddlepaddle
 
 RUN pip install --no-cache-dir paddleocr
 
