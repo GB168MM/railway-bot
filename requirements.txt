@@ -1,7 +1,8 @@
 pyTelegramBotAPI
 flask
 requests
-pytesseract
 Pillow
+easyocr
+numpy
 
 # test rebuild
