@@ -4,5 +4,3 @@ requests
 Pillow
 easyocr
 numpy
-
-# test rebuild
