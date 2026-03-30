@@ -49,23 +49,19 @@ def mm_to_en(text):
 
 def clean_text(text):
     text = mm_to_en(text)
-    text = text.replace("J", "2")
     text = text.replace("O", "0")
     text = text.replace("o", "0")
     text = text.replace(",", "")
     return text
 
-# ================= BANK DETECT =================
-def detect_bank(image, text):
+# ================= BANK =================
+def detect_bank(text):
     t = text.lower()
 
     if "kbz" in t:
         return "KBZ"
 
-    if "wave" in t:
-        return "Wave"
-
-    if "ကျပ်" in text:
+    if "wave" in t or "ကျပ်" in text:
         return "Wave"
 
     return "unknown"
@@ -87,42 +83,31 @@ def extract_kbz_amount(text):
 
     return "unknown"
 
-# ================= WAVE (FIXED) =================
-def extract_wave_amount(image):
-    gray = image.convert("L")
-
-    text = pytesseract.image_to_string(
-        gray,
-        lang='eng+my',
-        config='--psm 6'
-    )
-
-    print("RAW OCR:", text)
-
+# ================= WAVE (STRONG FIX) =================
+def extract_wave_amount(text):
     text = clean_text(text)
 
-    print("CLEAN OCR:", text)
+    print("CLEAN TEXT:", text)
 
-    # ✅ priority: number + ကျပ်
+    # ✅ PRIORITY 1 → number + ကျပ်
     matches = re.findall(r"(\d{4,})\s*ကျပ်", text)
-
     if matches:
-        print("MATCH KYAT:", matches)
+        print("KYAT MATCH:", matches)
         return matches[-1]
 
-    # ✅ fallback: 1xxxx pattern (Wave mostly)
-    matches = re.findall(r"\b(1\d{4})\b", text)
-
+    # ✅ PRIORITY 2 → exact 5 digit (15000 type)
+    matches = re.findall(r"\b\d{5}\b", text)
     if matches:
-        print("MATCH 1XXXX:", matches)
+        print("5 DIGIT MATCH:", matches)
         return matches[0]
 
-    # ✅ last fallback
+    # ✅ PRIORITY 3 → all numbers filter
     nums = re.findall(r"\d{4,}", text)
+    nums = [int(n) for n in nums if 1000 <= int(n) <= 1000000]
+
     if nums:
-        nums = [int(n) for n in nums if 1000 <= int(n) <= 10000000]
-        if nums:
-            return str(max(nums))
+        print("FALLBACK:", nums)
+        return str(max(nums))
 
     return "unknown"
 
@@ -173,16 +158,16 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
-        # OCR TEXT
+        # OCR
         text = pytesseract.image_to_string(image, lang='eng+my')
-        print("OCR TEXT:", text)
+        print("RAW OCR:", text)
 
-        bank = detect_bank(image, text)
+        bank = detect_bank(text)
 
         if bank == "KBZ":
             amount = extract_kbz_amount(text)
         elif bank == "Wave":
-            amount = extract_wave_amount(image)
+            amount = extract_wave_amount(text)
         else:
             amount = "unknown"
 
