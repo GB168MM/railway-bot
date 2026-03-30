@@ -4,5 +4,3 @@ requests
 Pillow
 numpy
 opencv-python-headless
-paddleocr
-paddlepaddle
