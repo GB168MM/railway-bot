@@ -1,6 +1,8 @@
+import os
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+
 import telebot
 from flask import Flask, request
-import os
 import requests
 from datetime import datetime
 from PIL import Image
