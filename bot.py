@@ -10,7 +10,6 @@ import re
 
 # ================= CONFIG =================
 TOKEN = os.environ.get("BOT_TOKEN")
-
 WEBHOOK_URL = "https://beautiful-delight-production-79cf.up.railway.app"
 
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
@@ -23,7 +22,7 @@ first_msg_saved = {}
 
 GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
 
-# ================= SEND =================
+# ================= SEND TO SHEETS =================
 def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
     data = {
         "user_id": user_id,
@@ -60,28 +59,22 @@ def clean_text(text):
     text = text.replace(",", "")
     return text
 
-# ================= BANK =================
+# ================= BANK DETECT =================
 def detect_bank(text):
     t = text.lower()
-
     if "kbz" in t:
         return "KBZ"
-
     if "wave" in t or "ကျပ်" in text:
         return "Wave"
-
     return "unknown"
 
 # ================= KBZ =================
 def extract_kbz_amount(text):
     text = clean_text(text)
-
     nums = re.findall(r"\d{4,}", text)
     nums = [int(n) for n in nums if 1000 <= int(n) <= 10000000]
-
     if nums:
         return str(max(nums))
-
     return "unknown"
 
 # ================= WAVE =================
@@ -132,7 +125,7 @@ def start(msg):
 
     send_to_sheet(uid, source, "start", "start", "", "", "")
 
-# ================= TEXT =================
+# ================= FIRST MESSAGE =================
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def first_msg(msg):
     uid = msg.chat.id
@@ -162,6 +155,7 @@ def photo(msg):
         file = bot.download_file(file_path)
         image = Image.open(io.BytesIO(file)).convert("RGB")
 
+        # OCR
         text = pytesseract.image_to_string(image, lang='eng+my')
         print("OCR:", text)
 
@@ -184,7 +178,7 @@ def photo(msg):
         print("ERROR:", e)
 
 # ================= WEBHOOK =================
-@app.route(f"/{TOKEN}", methods=["POST"])
+@app.route("/", methods=["POST"])
 def webhook():
     update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
     bot.process_new_updates([update])
@@ -197,7 +191,5 @@ def home():
 # ================= RUN =================
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(
-        url=f"{WEBHOOK_URL}/{TOKEN}"
-    )
+    bot.set_webhook(url=WEBHOOK_URL)  # ROOT ONLY
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
