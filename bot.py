@@ -84,19 +84,14 @@ def extract_kbz_amount(text):
 def extract_wave_amount(text):
     text = clean_text(text)
 
-    print("WAVE TEXT:", text)
-
-    # ကျပ် ပါတာ
     matches = re.findall(r"(\d{4,6})\s*ကျပ်", text)
     if matches:
         return matches[-1]
 
-    # Ks
     matches = re.findall(r"(\d{4,6})\s*ks", text.lower())
     if matches:
         return matches[-1]
 
-    # fallback
     nums = re.findall(r"\d{4,6}", text)
     nums = [int(n) for n in nums if 1000 <= int(n) <= 100000]
 
@@ -127,19 +122,23 @@ def start(msg):
 
     send_to_sheet(uid, source, "start", "start", "0", "", "")
 
-# ================= PHOTO =================
-@bot.message_handler(content_types=['photo'])
-def photo(msg):
-    print("PHOTO RECEIVED")
+# ================= PHOTO / DOCUMENT =================
+@bot.message_handler(content_types=['photo', 'document'])
+def handle_image(msg):
+    print("IMAGE RECEIVED")
 
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
     try:
-        file_id = msg.photo[-1].file_id
-        file_info = bot.get_file(file_id)
+        if msg.content_type == 'photo':
+            file_id = msg.photo[-1].file_id
+        else:
+            file_id = msg.document.file_id
 
+        file_info = bot.get_file(file_id)
         file_path = file_info.file_path
+
         image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
 
         file = bot.download_file(file_path)
@@ -148,7 +147,7 @@ def photo(msg):
         text = pytesseract.image_to_string(image, lang='eng+my', config='--psm 6')
         text_clean = clean_text(text)
 
-        print("OCR:", text_clean)
+        print("OCR TEXT:", text_clean)
 
         bank = detect_bank(text_clean)
 
@@ -163,15 +162,14 @@ def photo(msg):
 
         print("FINAL:", amount, bank, status)
 
-        # 🔥 ALWAYS SAVE
         send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
-        print("PHOTO ERROR:", e)
+        print("IMAGE ERROR:", e)
 
 # ================= TEXT =================
 @bot.message_handler(func=lambda m: True, content_types=['text'])
-def text_handler(msg):
+def handle_text(msg):
     uid = msg.chat.id
     source = user_source.get(uid, "unknown")
 
