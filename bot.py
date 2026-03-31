@@ -3,27 +3,44 @@ from flask import Flask, request
 import os
 import requests
 from datetime import datetime
-from PIL import Image
 import pytesseract
+from PIL import Image
 import io
 import re
 
-# ========= CONFIG =========
+# ================= OCR =================
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+os.environ["TESSDATA_PREFIX"] = "/usr/share/tesseract-ocr/4.00/tessdata"
+
+# ================= BOT =================
 TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
+
 app = Flask(__name__)
 
-GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7xVq8FxsskDL9WmRRb3eANP5UnQvqKU_hPebnTfPo0R5Z5dDnzw/exec"
+user_source = {}
+first_msg_saved = {}
 
-# ========= SEND TO SHEET =========
-def send_to_sheet(data):
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/XXXXX/exec"
+
+# ================= SHEET =================
+def send_to_sheet(user_id, source, msg_type, message, amount, bank, status):
+    data = {
+        "user_id": user_id,
+        "source": source,
+        "type": msg_type,
+        "message": message,
+        "amount": amount,
+        "bank": bank,
+        "status": status,
+        "time": str(datetime.now())
+    }
     try:
-        res = requests.post(GOOGLE_SHEET_URL, json=data)
-        print("SENT:", data, "STATUS:", res.status_code)
+        requests.post(GOOGLE_SHEET_URL, json=data)
     except Exception as e:
         print("SHEET ERROR:", e)
 
-# ========= UTIL =========
+# ================= UTIL =================
 def mm_to_en(text):
     mm = "၀၁၂၃၄၅၆၇၈၉"
     en = "0123456789"
@@ -31,94 +48,139 @@ def mm_to_en(text):
         text = text.replace(m, e)
     return text
 
-def extract_amount(text):
-    text = mm_to_en(text)
-    text = text.replace(",", "")
-    nums = re.findall(r"\d{4,6}", text)
-    if nums:
-        nums = [int(n) for n in nums if 1000 <= int(n) <= 100000]
-        if nums:
-            nums.sort()
-            return str(nums[len(nums)//2])
-    return "0"
+# ================= SLIP CHECK =================
+def is_slip(text):
+    t = text.lower()
 
-# ========= START =========
+    if "kbz" in t:
+        return True
+
+    if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
+        return True
+
+    return False
+
+# ================= AMOUNT =================
+def get_amount(text):
+    text = mm_to_en(text)
+
+    # remove comma
+    t = text.replace(",", "")
+
+    # fix OCR split → 20 000 → 20000
+    t = re.sub(r"(\d)\s+(\d)", r"\1\2", t)
+
+    nums = re.findall(r"\d+", t)
+
+    valid = []
+    for n in nums:
+        val = int(n)
+
+        # filter realistic money only
+        if 1000 <= val <= 1000000:
+            valid.append(val)
+
+    if valid:
+        return str(max(valid))
+
+    return "unknown"
+
+# ================= BANK =================
+def get_bank(text):
+    t = text.lower()
+
+    if "kbz" in t:
+        return "KBZ"
+
+    if any(x in t for x in ["ကျပ်", "ကျပ", "kyat", "kya"]):
+        return "Wave"
+
+    return "unknown"
+
+# ================= STATUS =================
+def get_status(text):
+    t = text.lower()
+    if any(x in t for x in ["success", "completed", "thank", "အောင်မြင်"]):
+        return "success"
+    return "unknown"
+
+# ================= START =================
 @bot.message_handler(commands=['start'])
 def start(msg):
-    send_to_sheet({
-        "type": "start",
-        "user_id": msg.chat.id,
-        "text": "start",
-        "amount": "0",
-        "time": str(datetime.now())
-    })
+    uid = msg.chat.id
+    source = "unknown"
 
-# ========= TEXT =========
-@bot.message_handler(content_types=['text'])
-def text(msg):
-    send_to_sheet({
-        "type": "text",
-        "user_id": msg.chat.id,
-        "text": msg.text,
-        "amount": "0",
-        "time": str(datetime.now())
-    })
+    if len(msg.text.split()) > 1:
+        source = msg.text.split()[1]
 
-# ========= IMAGE =========
-@bot.message_handler(content_types=['photo', 'document'])
-def image(msg):
-    print("IMAGE RECEIVED")
+    user_source[uid] = source
+    first_msg_saved[uid] = False
+
+    send_to_sheet(uid, source, "start", "start", "", "", "")
+
+# ================= TEXT =================
+@bot.message_handler(func=lambda m: True, content_types=['text'])
+def first_msg(msg):
+    uid = msg.chat.id
+    source = user_source.get(uid, "unknown")
+
+    if not first_msg_saved.get(uid, False):
+        send_to_sheet(uid, source, "first_message", msg.text, "", "", "")
+        first_msg_saved[uid] = True
+
+# ================= PHOTO =================
+@bot.message_handler(content_types=['photo'])
+def photo(msg):
+    uid = msg.chat.id
+    source = user_source.get(uid, "unknown")
 
     try:
-        # photo OR document
-        if msg.content_type == 'photo':
-            file_id = msg.photo[-1].file_id
-        else:
-            file_id = msg.document.file_id
-
+        file_id = msg.photo[-1].file_id
         file_info = bot.get_file(file_id)
-        file = bot.download_file(file_info.file_path)
 
-        image = Image.open(io.BytesIO(file)).convert("RGB")
+        file_path = file_info.file_path
+        image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+
+        file = bot.download_file(file_path)
+        image = Image.open(io.BytesIO(file))
 
         # OCR
-        text = pytesseract.image_to_string(image, lang='eng+my', config='--psm 6')
-        print("OCR TEXT:", text)
+        text = pytesseract.image_to_string(
+            image,
+            lang='eng+my',
+            config='--psm 6'
+        )
 
-        amount = extract_amount(text)
+        print("OCR TEXT:\n", text)
 
-        image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
+        if not is_slip(text):
+            print("NOT SLIP")
+            return
 
-        print("FINAL AMOUNT:", amount)
+        amount = get_amount(text)
+        bank = get_bank(text)
+        status = get_status(text)
 
-        send_to_sheet({
-            "type": "image",
-            "user_id": msg.chat.id,
-            "text": text,
-            "amount": amount,
-            "image_url": image_url,
-            "time": str(datetime.now())
-        })
+        print("RESULT:", amount, bank)
+
+        send_to_sheet(uid, source, "deposit", image_url, amount, bank, status)
 
     except Exception as e:
-        print("IMAGE ERROR:", e)
+        print("ERROR:", e)
 
-# ========= WEBHOOK =========
-@app.route("/", methods=["POST"])
+# ================= WEBHOOK =================
+@app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    json_str = request.get_data().decode("UTF-8")
-    update = telebot.types.Update.de_json(json_str)
+    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
     bot.process_new_updates([update])
     return "OK"
 
 @app.route("/")
 def home():
-    return "BOT RUNNING"
+    return "Running"
 
-# ========= RUN =========
+# ================= RUN =================
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(
-        url="https://beautiful-delight-production-79cf.up.railway.app/"
-    )
+    bot.set_webhook(url=f"https://railway-bot-production-e57e.up.railway.app/{TOKEN}")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
