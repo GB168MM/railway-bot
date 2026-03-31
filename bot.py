@@ -18,10 +18,29 @@ GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxnchGPWar1Ktl8IWa7x
 # ========= SEND TO SHEET =========
 def send_to_sheet(data):
     try:
-        requests.post(GOOGLE_SHEET_URL, json=data)
-        print("SENT:", data)
+        res = requests.post(GOOGLE_SHEET_URL, json=data)
+        print("SENT:", data, "STATUS:", res.status_code)
     except Exception as e:
         print("SHEET ERROR:", e)
+
+# ========= UTIL =========
+def mm_to_en(text):
+    mm = "၀၁၂၃၄၅၆၇၈၉"
+    en = "0123456789"
+    for m, e in zip(mm, en):
+        text = text.replace(m, e)
+    return text
+
+def extract_amount(text):
+    text = mm_to_en(text)
+    text = text.replace(",", "")
+    nums = re.findall(r"\d{4,6}", text)
+    if nums:
+        nums = [int(n) for n in nums if 1000 <= int(n) <= 100000]
+        if nums:
+            nums.sort()
+            return str(nums[len(nums)//2])
+    return "0"
 
 # ========= START =========
 @bot.message_handler(commands=['start'])
@@ -30,7 +49,8 @@ def start(msg):
         "type": "start",
         "user_id": msg.chat.id,
         "text": "start",
-        "amount": "0"
+        "amount": "0",
+        "time": str(datetime.now())
     })
 
 # ========= TEXT =========
@@ -40,38 +60,48 @@ def text(msg):
         "type": "text",
         "user_id": msg.chat.id,
         "text": msg.text,
-        "amount": "0"
+        "amount": "0",
+        "time": str(datetime.now())
     })
 
 # ========= IMAGE =========
-@bot.message_handler(content_types=['photo'])
-def photo(msg):
-    print("PHOTO RECEIVED")
+@bot.message_handler(content_types=['photo', 'document'])
+def image(msg):
+    print("IMAGE RECEIVED")
 
-    file_id = msg.photo[-1].file_id
-    file_info = bot.get_file(file_id)
-    file = bot.download_file(file_info.file_path)
+    try:
+        # photo OR document
+        if msg.content_type == 'photo':
+            file_id = msg.photo[-1].file_id
+        else:
+            file_id = msg.document.file_id
 
-    image = Image.open(io.BytesIO(file))
-    text = pytesseract.image_to_string(image)
+        file_info = bot.get_file(file_id)
+        file = bot.download_file(file_info.file_path)
 
-    print("OCR:", text)
+        image = Image.open(io.BytesIO(file)).convert("RGB")
 
-    amount = extract_amount(text)
+        # OCR
+        text = pytesseract.image_to_string(image, lang='eng+my', config='--psm 6')
+        print("OCR TEXT:", text)
 
-    send_to_sheet({
-        "type": "image",
-        "user_id": msg.chat.id,
-        "text": text,
-        "amount": amount
-    })
+        amount = extract_amount(text)
 
-# ========= AMOUNT =========
-def extract_amount(text):
-    nums = re.findall(r"\d{4,6}", text)
-    if nums:
-        return nums[0]
-    return "0"
+        image_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
+
+        print("FINAL AMOUNT:", amount)
+
+        send_to_sheet({
+            "type": "image",
+            "user_id": msg.chat.id,
+            "text": text,
+            "amount": amount,
+            "image_url": image_url,
+            "time": str(datetime.now())
+        })
+
+    except Exception as e:
+        print("IMAGE ERROR:", e)
 
 # ========= WEBHOOK =========
 @app.route("/", methods=["POST"])
@@ -88,5 +118,7 @@ def home():
 # ========= RUN =========
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(url="https://beautiful-delight-production-79cf.up.railway.app/")
+    bot.set_webhook(
+        url="https://beautiful-delight-production-79cf.up.railway.app/"
+    )
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
